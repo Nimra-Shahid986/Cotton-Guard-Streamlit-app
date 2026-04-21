@@ -1,10 +1,7 @@
 """
 Cotton Guard — Cotton Leaf Disease Detection System
-=====================================================
-Deep learning application for Pakistani cotton farmers.
-Datasets: SAR-CLD 2024 (7 classes) → LDASN | Cotton Leaf Disease (4 classes) → ConvNeXt-T
+Exact LDASN architecture from training code + ConvNeXt-T
 """
-
 import streamlit as st
 import torch
 import torch.nn as nn
@@ -16,7 +13,7 @@ import time
 
 st.set_page_config(page_title="Cotton Guard — Leaf Disease Detection", page_icon="🍃", layout="wide", initial_sidebar_state="expanded")
 
-# ─── Warm Earthy Theme CSS ─────────────────────────────────────────────────
+# ─── CSS ───────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Nunito:wght@300;400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap');
@@ -53,7 +50,6 @@ div[data-testid="stFileUploader"]:hover { border-color:#8b6914; }
 section[data-testid="stSidebar"] { background:#2d3a1e !important; }
 section[data-testid="stSidebar"] .stMarkdown p, section[data-testid="stSidebar"] .stMarkdown li { color:#d4dccb !important; }
 div[data-testid="stSelectbox"] > div > div { background:#d9e4cf !important; border-color:#b8c9a8 !important; }
-div[data-testid="stMainBlockContainer"] { background:#e8efe2 !important; }
 .stSelectbox label { color:#5a6650 !important; font-family:'Fira Code',monospace !important; font-size:0.68rem !important; text-transform:uppercase; letter-spacing:2px; }
 .stButton > button[kind="primary"] { background:linear-gradient(135deg,#2d5016,#3d6b20) !important; color:white !important; border:none !important; border-radius:10px !important; font-weight:700 !important; font-size:1rem !important; }
 .stButton > button[kind="primary"]:hover { background:linear-gradient(135deg,#3d6b20,#4a8028) !important; }
@@ -66,14 +62,14 @@ div[data-testid="stMainBlockContainer"] { background:#e8efe2 !important; }
 SAR_CLD_CLASSES = ["Bacterial Blight","Curl Virus","Healthy Leaf","Herbicide Growth Damage","Leaf Hopper Jassids","Leaf Redding","Leaf Variegation"]
 COTTON_LEAF_CLASSES = ["Bacterial Blight","Curl Virus","Fussarium Wilt","Healthy"]
 DATASET_INFO = {
-    "SAR-CLD 2024 — 7 Classes": {"classes":SAR_CLD_CLASSES,"model_file":"models/swin_t_best.pt","architecture":"LDASN (Lightweight Dynamic Attention)","arch_key":"Swin_T","img_size":64},
+    "SAR-CLD 2024 — 7 Classes": {"classes":SAR_CLD_CLASSES,"model_file":"models/swin_t_best.pt","architecture":"LDASN (Lightweight Dual-Attention)","arch_key":"LDASN","img_size":224},
     "Cotton Leaf Disease — 4 Classes": {"classes":COTTON_LEAF_CLASSES,"model_file":"models/convnext_t_best.pt","architecture":"ConvNeXt Tiny (ConvNeXt-T)","arch_key":"ConvNeXt_T","img_size":224},
 }
 DISEASE_INFO = {
     "Bacterial Blight": {"severity":"High","icon":"🔴","description":"Angular water-soaked lesions on leaves that turn brown. Causes defoliation and boll rot.","symptoms":"Water-soaked angular spots, blackening of veins, premature defoliation.","treatment":"Use copper-based bactericides. Plant resistant varieties. Remove and destroy infected debris.","prevention":"Use certified disease-free seeds, crop rotation with non-host crops, avoid overhead irrigation."},
     "Curl Virus": {"severity":"Very High","icon":"🔴","description":"Transmitted by whiteflies, causes upward or downward curling of leaves, stunted growth, and severe yield loss.","symptoms":"Leaf curling, thickened veins, enation (leaf-like outgrowths), stunted plants, reduced boll formation.","treatment":"Control whitefly vectors with insecticides (imidacloprid, acetamiprid). Remove infected plants early. Use sticky traps.","prevention":"Plant resistant varieties (BT cotton with CLCuV tolerance), early sowing, maintain field hygiene."},
     "Healthy Leaf": {"severity":"None","icon":"🟢","description":"The leaf appears healthy with no visible signs of disease or pest damage.","symptoms":"No symptoms — uniform green color, normal leaf shape and size.","treatment":"No treatment needed. Continue regular crop management.","prevention":"Maintain balanced nutrition, proper irrigation scheduling, and regular scouting."},
-    "Healthy": {"severity":"None","icon":"🟢","description":"The leaf appears healthy with no visible signs of disease or pest damage.","symptoms":"No symptoms — uniform green color, normal leaf shape and size.","treatment":"No treatment needed. Continue regular crop management.","prevention":"Maintain balanced nutrition, proper irrigation scheduling, and regular scouting."},
+    "Healthy": {"severity":"None","icon":"🟢","description":"The leaf appears healthy with no visible signs of disease or pest damage.","symptoms":"No symptoms.","treatment":"No treatment needed.","prevention":"Maintain balanced nutrition, proper irrigation, and regular scouting."},
     "Herbicide Growth Damage": {"severity":"Medium","icon":"🟡","description":"Damage from herbicide drift or misapplication, resulting in abnormal leaf growth.","symptoms":"Cupped or strapped leaves, abnormal growth, epinasty, chlorosis.","treatment":"Foliar application of growth regulators. Provide adequate irrigation and nutrition.","prevention":"Proper herbicide application techniques, avoid spraying on windy days, calibrate sprayers."},
     "Leaf Hopper Jassids": {"severity":"Medium-High","icon":"🟠","description":"Jassids suck cell sap from leaves causing yellowing and curling of leaf margins.","symptoms":"Yellowing of leaf margins, downward curling, hopper burn in severe cases.","treatment":"Apply systemic insecticides (thiamethoxam, imidacloprid). Use neem-based sprays.","prevention":"Use resistant varieties, intercropping, maintain natural predators."},
     "Leaf Redding": {"severity":"Medium","icon":"🟡","description":"Reddening of leaves due to nutrient deficiency (often magnesium) or physiological stress.","symptoms":"Reddish-purple discoloration, starting from lower leaves and moving upward.","treatment":"Foliar application of magnesium sulphate. Correct nutrient imbalances.","prevention":"Regular soil testing, balanced NPK application."},
@@ -81,79 +77,162 @@ DISEASE_INFO = {
     "Fussarium Wilt": {"severity":"High","icon":"🔴","description":"Soil-borne fungal disease that blocks water-conducting vessels, causing wilting and death.","symptoms":"Yellowing on one side, wilting despite adequate moisture, brown vascular tissue.","treatment":"Remove and destroy infected plants. Soil solarization. Trichoderma biocontrol.","prevention":"Use resistant varieties, long crop rotation (3+ years), avoid waterlogging."},
 }
 
-# ─── LDASN Architecture ───────────────────────────────────────────────────
+# ─── EXACT LDASN Architecture (from training code) ────────────────────────
+LDASN_IMG_SIZE = 224
+LDASN_D_MODEL = 256
+LDASN_N_HEADS = 4
+LDASN_N_LAYERS = 4
+LDASN_TOP_K = 50
+LDASN_PATCH_SIZE = 16
+
 class DepthwiseSeparableConv(nn.Module):
-    def __init__(s,ic,oc,k,st=1,p=0):
-        super().__init__(); s.dw=nn.Conv2d(ic,ic,k,st,p,groups=ic,bias=False); s.pw=nn.Conv2d(ic,oc,1,bias=False); s.bn=nn.BatchNorm2d(oc)
-    def forward(s,x): return s.bn(s.pw(s.dw(x)))
+    def __init__(self, in_ch, out_ch, kernel_size, padding):
+        super().__init__()
+        self.dw = nn.Conv2d(in_ch, in_ch, kernel_size, padding=padding, groups=in_ch, bias=False)
+        self.pw = nn.Conv2d(in_ch, out_ch, 1, bias=False)
+        self.bn = nn.BatchNorm2d(out_ch)
+        self.act = nn.GELU()
+    def forward(self, x):
+        return self.act(self.bn(self.pw(self.dw(x))))
+
+class SEBlock(nn.Module):
+    def __init__(self, ch, r=16):
+        super().__init__()
+        self.fc = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1), nn.Flatten(),
+            nn.Linear(ch, max(ch // r, 4)), nn.ReLU(),
+            nn.Linear(max(ch // r, 4), ch), nn.Sigmoid()
+        )
+    def forward(self, x):
+        return x * self.fc(x).view(x.size(0), -1, 1, 1)
+
 class MultiScaleExtractor(nn.Module):
-    def __init__(s):
-        super().__init__(); s.stem=nn.Sequential(nn.Conv2d(3,32,3,stride=2,padding=1,bias=False),nn.BatchNorm2d(32))
-        s.scale1=nn.Sequential(DepthwiseSeparableConv(32,64,3,2,1),DepthwiseSeparableConv(64,64,3,1,1))
-        s.scale2=nn.Sequential(DepthwiseSeparableConv(32,64,5,2,2),DepthwiseSeparableConv(64,64,5,1,2))
-        s.merge_se=nn.ModuleDict({'fc':nn.Sequential(nn.AdaptiveAvgPool2d(1),nn.Flatten(),nn.Linear(128,8),nn.ReLU(),nn.Linear(8,128),nn.Sigmoid())})
-        s.proj=nn.Sequential(nn.Conv2d(128,128,1,bias=False),nn.BatchNorm2d(128)); s.shallow=nn.Sequential(DepthwiseSeparableConv(32,128,1,1,0))
-    def forward(s,x):
-        stem=F.relu(s.stem(x)); s1=F.relu(s.scale1(stem)); s2=F.relu(s.scale2(stem)); m=torch.cat([s1,s2],1)
-        return F.relu(s.proj(m*s.merge_se['fc'](m).unsqueeze(-1).unsqueeze(-1))), stem
-class PatchSelector(nn.Module):
-    def __init__(s,fd=128,ed=256,np_=49):
-        super().__init__(); s.saliency=nn.Conv2d(fd,1,1); s.proj=nn.Linear(32768,ed); s.pos_emb=nn.Embedding(np_,ed); s.register_buffer('pos_ids',torch.arange(np_))
-    def forward(s,x):
-        B=x.shape[0]; t=(x*torch.sigmoid(s.saliency(x))).flatten(2).transpose(1,2).reshape(B,-1)
-        t=s.proj(t).unsqueeze(1); p=s.pos_emb(s.pos_ids).unsqueeze(0); n=min(t.shape[1],p.shape[1]); return t[:,:n]+p[:,:n]
+    def __init__(self, in_ch=3, out_ch=128):
+        super().__init__()
+        mid = out_ch // 2
+        self.stem = nn.Sequential(nn.Conv2d(in_ch, 32, 3, stride=2, padding=1, bias=False), nn.BatchNorm2d(32), nn.GELU())
+        self.scale1 = nn.Sequential(DepthwiseSeparableConv(32, 64, 3, 1), DepthwiseSeparableConv(64, mid, 3, 1))
+        self.scale2 = nn.Sequential(DepthwiseSeparableConv(32, 64, 5, 2), DepthwiseSeparableConv(64, mid, 5, 2))
+        self.merge_se = SEBlock(out_ch)
+        self.proj = nn.Sequential(nn.Conv2d(out_ch, out_ch, 1, bias=False), nn.BatchNorm2d(out_ch), nn.GELU())
+        self.shallow = nn.Sequential(DepthwiseSeparableConv(32, out_ch, 1, 0))
+    def forward(self, x):
+        s = self.stem(x)
+        s1 = self.scale1(s); s2 = self.scale2(s)
+        merged = self.merge_se(torch.cat([s1, s2], dim=1))
+        return self.proj(merged), self.shallow(s)
+
+class SparsePatchSelector(nn.Module):
+    def __init__(self, in_ch, d_model, patch_size, top_k):
+        super().__init__()
+        self.patch_size = patch_size; self.top_k = top_k
+        self.saliency = nn.Conv2d(in_ch, 1, 1)
+        self.proj = nn.Linear(in_ch * patch_size * patch_size, d_model)
+        n_patches = (LDASN_IMG_SIZE // 2 // patch_size) ** 2
+        self.pos_emb = nn.Embedding(n_patches, d_model)
+        self.register_buffer('pos_ids', torch.arange(n_patches))
+    def forward(self, deep, shallow):
+        B, C, H, W = deep.shape; P = self.patch_size
+        sal = self.saliency(deep); n_h, n_w = H // P, W // P
+        sal_flat = F.avg_pool2d(sal, P).view(B, -1)
+        k = min(self.top_k, sal_flat.shape[1])
+        _, top_idx = sal_flat.topk(k, dim=1)
+        feat = deep + shallow
+        feat_unf = feat.unfold(2, P, P).unfold(3, P, P).contiguous().view(B, C, n_h*n_w, P*P)
+        feat_unf = feat_unf.permute(0, 2, 1, 3).contiguous().view(B, n_h*n_w, C*P*P)
+        idx_exp = top_idx.unsqueeze(-1).expand(-1, -1, feat_unf.shape[-1])
+        tokens = self.proj(torch.gather(feat_unf, 1, idx_exp))
+        pos_e = self.pos_emb(self.pos_ids).unsqueeze(0).expand(B, -1, -1)
+        idx_pos = top_idx.unsqueeze(-1).expand(-1, -1, LDASN_D_MODEL)
+        tokens = tokens + torch.gather(pos_e, 1, idx_pos)
+        ch_attn = self.saliency(deep).sigmoid().mean(dim=[2, 3])
+        return tokens, top_idx, ch_attn
+
 class TransformerBlock(nn.Module):
-    def __init__(s,d=256,h=8,r=2):
-        super().__init__(); s.norm1=nn.LayerNorm(d); s.attn=nn.MultiheadAttention(d,h,batch_first=True); s.norm2=nn.LayerNorm(d); s.mlp=nn.Sequential(nn.Linear(d,d*r),nn.GELU(),nn.Dropout(0.1),nn.Linear(d*r,d))
-    def forward(s,x): xn=s.norm1(x); x=x+s.attn(xn,xn,xn)[0]; return x+s.mlp(s.norm2(x))
-class LDASNTransformer(nn.Module):
-    def __init__(s,d=256,dp=4,h=8):
-        super().__init__(); s.cls_token=nn.Parameter(torch.randn(1,1,d)); s.blocks=nn.ModuleList([TransformerBlock(d,h) for _ in range(dp)]); s.norm=nn.LayerNorm(d)
-    def forward(s,x):
-        x=torch.cat([s.cls_token.expand(x.shape[0],-1,-1),x],1)
-        for b in s.blocks: x=b(x)
-        return s.norm(x[:,0])
-class ClassificationHead(nn.Module):
-    def __init__(s,d=256,nc=7): super().__init__(); s.temperature=nn.Parameter(torch.ones(1)); s.fc=nn.Linear(d,nc)
-    def forward(s,x): return s.fc(x)/s.temperature
+    def __init__(self, d_model, n_heads, mlp_ratio=2.0, dropout=0.1):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(d_model)
+        self.attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        self.norm2 = nn.LayerNorm(d_model)
+        mlp_dim = int(d_model * mlp_ratio)
+        self.mlp = nn.Sequential(nn.Linear(d_model, mlp_dim), nn.GELU(), nn.Dropout(dropout), nn.Linear(mlp_dim, d_model), nn.Dropout(dropout))
+    def forward(self, x, ch_attn_mask=None):
+        norm_x = self.norm1(x); attn_out, _ = self.attn(norm_x, norm_x, norm_x)
+        if ch_attn_mask is not None: attn_out = attn_out * ch_attn_mask.unsqueeze(-1)
+        x = x + attn_out; return x + self.mlp(self.norm2(x))
+
+class TinyTransformer(nn.Module):
+    def __init__(self, d_model, n_heads, n_layers):
+        super().__init__()
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+        self.blocks = nn.ModuleList([TransformerBlock(d_model, n_heads) for _ in range(n_layers)])
+        self.norm = nn.LayerNorm(d_model)
+    def forward(self, tokens, ch_attn):
+        B = tokens.shape[0]; x = torch.cat([self.cls_token.expand(B, -1, -1), tokens], dim=1)
+        for blk in self.blocks: x = blk(x, ch_attn)
+        return self.norm(x[:, 0])
+
+class TemperatureScaledHead(nn.Module):
+    def __init__(self, d_model, num_classes):
+        super().__init__()
+        self.fc = nn.Linear(d_model, num_classes)
+        self.temperature = nn.Parameter(torch.ones(1))
+    def forward(self, x): return self.fc(x) / self.temperature.clamp(min=0.1)
+
 class LDASN(nn.Module):
-    def __init__(s,nc=7):
-        super().__init__(); s.extractor=MultiScaleExtractor(); s.selector=PatchSelector(128,256,49); s.transformer=LDASNTransformer(256,4,8); s.head=ClassificationHead(256,nc)
-    def forward(s,x): f,_=s.extractor(x); return s.head(s.transformer(s.selector(f)))
+    def __init__(self, num_classes):
+        super().__init__()
+        C = 128
+        self.extractor = MultiScaleExtractor(in_ch=3, out_ch=C)
+        self.selector = SparsePatchSelector(in_ch=C, d_model=LDASN_D_MODEL, patch_size=LDASN_PATCH_SIZE, top_k=LDASN_TOP_K)
+        self.transformer = TinyTransformer(LDASN_D_MODEL, LDASN_N_HEADS, LDASN_N_LAYERS)
+        self.head = TemperatureScaledHead(LDASN_D_MODEL, num_classes)
+    def forward(self, x):
+        deep, shallow = self.extractor(x)
+        tokens, top_idx, ch_attn = self.selector(deep, shallow)
+        cls_feat = self.transformer(tokens, ch_attn)
+        return self.head(cls_feat)
 
 # ─── Model Loading ─────────────────────────────────────────────────────────
 @st.cache_resource
 def load_model(arch_key, model_path, num_classes):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if arch_key == "Swin_T": model = LDASN(num_classes)
-    else: model = models.convnext_tiny(weights=None); model.classifier[2] = nn.Linear(model.classifier[2].in_features, num_classes)
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False)); model.to(device).eval(); return model, device
+    if arch_key == "LDASN":
+        model = LDASN(num_classes)
+    elif arch_key == "ConvNeXt_T":
+        model = models.convnext_tiny(weights=None)
+        model.classifier[2] = nn.Linear(model.classifier[2].in_features, num_classes)
+    else:
+        raise ValueError(f"Unknown: {arch_key}")
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False))
+    model.to(device).eval()
+    return model, device
 
 def predict(model, image, device, class_names, img_size=224):
-    tf = transforms.Compose([transforms.Resize((img_size,img_size)),transforms.ToTensor(),transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])])
+    tf = transforms.Compose([transforms.Resize((img_size, img_size)), transforms.ToTensor(), transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])])
     start = time.time()
-    with torch.no_grad(): probs = F.softmax(model(tf(image).unsqueeze(0).to(device)),1).cpu().numpy()[0]
+    with torch.no_grad(): probs = F.softmax(model(tf(image).unsqueeze(0).to(device)), 1).cpu().numpy()[0]
     idx = int(np.argmax(probs))
     return {"class":class_names[idx],"index":idx,"confidence":float(probs[idx]),"probabilities":{cn:float(probs[i]) for i,cn in enumerate(class_names)},"inference_time_ms":(time.time()-start)*1000}
 
 # ─── AI Chatbot (Groq) ────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are Cotton Guard Assistant — an AI expert on cotton leaf diseases for Pakistani cotton farmers.
 APP: Cotton Guard detects cotton leaf diseases via deep learning. Users upload leaf photos for instant diagnosis.
-MODELS: SAR-CLD 2024 (7 classes, LDASN, 64x64, ~98.4% acc) | Cotton Leaf Disease (4 classes, ConvNeXt-T, 224x224, ~97.7% acc).
+MODELS: SAR-CLD 2024 (7 classes, LDASN, 224x224, ~98.4% acc) | Cotton Leaf Disease (4 classes, ConvNeXt-T, 224x224, ~97.7% acc).
 TRAINING: 80/20 split, Focal Loss, AdamW, Cosine LR, augmentation, early stopping.
 DISEASES: Bacterial Blight (High), Curl Virus/CLCuV (Very High), Fussarium Wilt (High), Herbicide Damage (Medium), Jassids (Medium-High), Leaf Redding (Medium), Leaf Variegation (Medium).
-RULES: Only answer about cotton diseases/farming/this app. Redirect unrelated questions politely. Be concise, farmer-friendly. Support Urdu/Roman Urdu. Never make up info."""
+RULES: Only answer about cotton diseases/farming/this app. Redirect unrelated questions politely. Be concise, farmer-friendly. ALWAYS respond in English by default. Only respond in Urdu/Roman Urdu if the user explicitly asks you to write in Urdu or writes their message in Urdu. Never make up info."""
 
 def get_ai_response(user_msg, chat_history):
     import requests
     api_key = st.secrets.get("GROQ_API_KEY", "")
-    if not api_key: return "⚠️ Please add GROQ_API_KEY to Streamlit secrets."
+    if not api_key: return "Please add GROQ_API_KEY to Streamlit secrets."
     messages = [{"role":"system","content":SYSTEM_PROMPT}] + [{"role":m["role"],"content":m["content"]} for m in chat_history[-10:]] + [{"role":"user","content":user_msg}]
     try:
         r = requests.post("https://api.groq.com/openai/v1/chat/completions", json={"model":"llama-3.3-70b-versatile","messages":messages,"temperature":0.7,"max_tokens":500},
             headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"}, timeout=15).json()
-        return r["choices"][0]["message"]["content"] if "choices" in r else f"⚠️ {r.get('error',{}).get('message','Error')}"
-    except: return "⚠️ Connection error. Please try again."
+        return r["choices"][0]["message"]["content"] if "choices" in r else f"Error: {r.get('error',{}).get('message','Unknown')}"
+    except: return "Connection error. Please try again."
 
 # ╔═══════════════════════ SIDEBAR — CHATBOT ═══════════════════════════════╗
 with st.sidebar:
@@ -177,7 +256,6 @@ with st.sidebar:
 # ╔═══════════════════════ MAIN AREA ═══════════════════════════════════════╗
 st.markdown("""<div class="app-header"><h1>🍃 Cotton Guard</h1><p class="subtitle">Deep Learning Cotton Leaf Disease Detection for Farmers</p></div><div class="header-divider"></div>""", unsafe_allow_html=True)
 
-# Dataset Selection
 st.markdown('<div class="earth-card"><div class="earth-card-header">📋 Select Dataset & Model</div>', unsafe_allow_html=True)
 dataset_choice = st.selectbox("Dataset", list(DATASET_INFO.keys()), label_visibility="collapsed")
 ds = DATASET_INFO[dataset_choice]
@@ -188,7 +266,6 @@ st.markdown(f"""<div class="metric-row">
 <div class="metric-card"><div class="metric-label">Normalization</div><div class="metric-value">ImageNet</div></div>
 </div></div>""", unsafe_allow_html=True)
 
-# Upload + Preview
 col_up, col_prev = st.columns([1,1])
 with col_up:
     st.markdown('<div class="earth-card"><div class="earth-card-header">📷 Upload Cotton Leaf</div>', unsafe_allow_html=True)
@@ -201,7 +278,6 @@ with col_prev:
         st.image(image, caption=uploaded_file.name, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-# Analyze
 analyze = st.button("🔬  Analyze Leaf", use_container_width=True, type="primary")
 
 if analyze and uploaded_file:
@@ -223,7 +299,7 @@ if analyze and uploaded_file:
         with c2:
             st.markdown('<div class="earth-card"><div class="earth-card-header">Class Probabilities</div>', unsafe_allow_html=True)
             for cn,p in sorted(result["probabilities"].items(), key=lambda x:-x[1]):
-                bc2 = "#2d5016" if cn==pc else "#d4dccb"
+                bc2 = "#2d5016" if cn==pc else "#8b9e78"
                 st.markdown(f'<div class="prob-item"><div class="prob-name">{cn}</div><div class="prob-bar-bg"><div class="prob-bar-fill" style="width:{p*100:.1f}%;background:{bc2}"></div></div><div class="prob-pct">{p*100:.1f}%</div></div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="earth-card"><div class="earth-card-header">⚡ Performance</div><div class="metric-row"><div class="metric-card"><div class="metric-label">Inference</div><div class="metric-value">{result["inference_time_ms"]:.1f}ms</div></div><div class="metric-card"><div class="metric-label">Model</div><div class="metric-value">{ds["arch_key"]}</div></div><div class="metric-card"><div class="metric-label">Original</div><div class="metric-value">{image.size[0]}×{image.size[1]}</div></div><div class="metric-card"><div class="metric-label">Dataset</div><div class="metric-value">{dataset_choice.split("—")[0].strip()}</div></div></div></div>', unsafe_allow_html=True)
@@ -238,7 +314,7 @@ if analyze and uploaded_file:
             else:
                 st.markdown(f'<div class="info-card"><h4>✅ Your cotton leaf looks healthy!</h4><p>{info["description"]}</p></div>', unsafe_allow_html=True)
                 st.markdown(f'<div class="info-card"><h4>🌱 Maintenance Tips</h4><p>{info["prevention"]}</p></div>', unsafe_allow_html=True)
-    except FileNotFoundError: st.error(f"⚠️ Model not found: `{ds['model_file']}`")
+    except FileNotFoundError: st.error(f"Model not found: `{ds['model_file']}`")
     except Exception as e: st.error(f"Error: {str(e)}")
 elif analyze and not uploaded_file:
-    st.warning("☝️ Please upload a cotton leaf image first.")
+    st.warning("Please upload a cotton leaf image first.")
