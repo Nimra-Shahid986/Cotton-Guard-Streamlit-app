@@ -1,949 +1,244 @@
 """
-Cotton Guard - AI-Powered Cotton Leaf Disease Detection
-Streamlit App with Chatbot Sidebar
+Cotton Guard — Cotton Leaf Disease Detection System
 =====================================================
-Models trained: ResNet50, DenseNet121, EfficientNetB7, ViT-B/16, Swin-T, ConvNeXt-T
-Datasets: SAR-CLD 2024 (7 classes), Cotton Leaf Disease (4 classes)
-
-HOW TO RUN:
-    pip install streamlit torch torchvision Pillow numpy
-    streamlit run app.py
-
-HOW TO ADD YOUR TRAINED MODELS:
-    1. Create a folder called 'saved_models/' in the same directory as this file
-    2. Place your .pt files inside, e.g.:
-       saved_models/
-         ├── SAR-CLD_2024/
-         │     ├── ResNet50_best.pt
-         │     ├── DenseNet121_best.pt
-         │     ├── EfficientNetB7_best.pt
-         │     ├── ViT_B16_best.pt
-         │     ├── Swin_T_best.pt
-         │     └── ConvNeXt_T_best.pt
-         └── Cotton_Leaf_Disease/
-               ├── ResNet50_best.pt
-               ├── DenseNet121_best.pt
-               └── ... (same structure)
-    3. Set USE_REAL_MODEL = True below
-    4. Restart the app
+Deep learning application for Pakistani cotton farmers.
+Datasets: SAR-CLD 2024 (7 classes) → LDASN | Cotton Leaf Disease (4 classes) → ConvNeXt-T
 """
 
 import streamlit as st
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torchvision import transforms, models
+from PIL import Image
 import numpy as np
 import time
-from PIL import Image
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION
-# ══════════════════════════════════════════════════════════════════════════════
-USE_REAL_MODEL = False  # Set True once you place .pt files in saved_models/
+st.set_page_config(page_title="Cotton Guard — Leaf Disease Detection", page_icon="🍃", layout="wide", initial_sidebar_state="expanded")
 
-SAR_CLD_CLASSES = [
-    "Bacterial Blight", "Curl Virus", "Healthy",
-    "Herbicide Growth Damage", "Leaf Hopper Jassids",
-    "Leaf Reddening", "Leaf Variegation"
-]
-
-COTTON_LEAF_CLASSES = [
-    "Bacterial Blight", "Curl Virus", "Fusarium Wilt", "Healthy"
-]
-
-MODELS_LIST = [
-    "ResNet50", "DenseNet121", "EfficientNetB7",
-    "ViT-B/16", "Swin-T", "ConvNeXt-T"
-]
-
-MODEL_STATS = {
-    "ResNet50":       {"params": "23.5M", "flops": "4.1G",  "acc": "97.90%", "color": "#00d2d3"},
-    "DenseNet121":    {"params": "7.0M",  "flops": "2.9G",  "acc": "98.36%", "color": "#2ed573"},
-    "EfficientNetB7": {"params": "64.1M", "flops": "37.8G", "acc": "96.20%", "color": "#ffa502"},
-    "ViT-B/16":       {"params": "85.8M", "flops": "17.6G", "acc": "95.79%", "color": "#a29bfe"},
-    "Swin-T":         {"params": "27.5M", "flops": "4.5G",  "acc": "98.36%", "color": "#ff6b81"},
-    "ConvNeXt-T":     {"params": "27.8M", "flops": "4.5G",  "acc": "97.66%", "color": "#48dbfb"},
-}
-
-DISEASE_INFO = {
-    "Bacterial Blight": {
-        "severity": "🔴 High",
-        "emoji": "🦠",
-        "symptoms": "Angular water-soaked lesions on leaves that turn brown/black, vein necrosis, premature defoliation.",
-        "cause": "Xanthomonas citri pv. malvacearum — spread by rain splash, wind, contaminated seeds.",
-        "treatment": [
-            "Spray Copper oxychloride (3g/L) or Streptocycline (0.5g/L)",
-            "Remove and destroy infected plant debris",
-            "Use certified disease-free seeds",
-            "Avoid overhead irrigation during humid weather",
-        ],
-        "prevention": "Use resistant varieties (e.g., FH-142, MNH-886). Rotate crops every 2–3 years. Treat seeds with Carboxin + Thiram.",
-    },
-    "Curl Virus": {
-        "severity": "🔴 Critical",
-        "emoji": "🦟",
-        "symptoms": "Upward/downward leaf curling, stunted growth, thickened veins, small & deformed bolls, severe yield loss (up to 80%).",
-        "cause": "Cotton Leaf Curl Virus (CLCuV) — transmitted by whitefly (Bemisia tabaci).",
-        "treatment": [
-            "Spray Imidacloprid (0.5ml/L) or Thiamethoxam against whiteflies",
-            "Apply Neem oil (5ml/L) as a repellent",
-            "Remove severely infected plants immediately",
-            "Install yellow sticky traps (20–25 per acre)",
-        ],
-        "prevention": "Plant resistant/tolerant varieties. Early sowing (April–May). Avoid ratoon cropping. Monitor whitefly populations weekly.",
-    },
-    "Healthy": {
-        "severity": "🟢 None",
-        "emoji": "✅",
-        "symptoms": "No disease symptoms. Leaves are green, turgid, and normal-sized.",
-        "cause": "N/A — Plant is healthy.",
-        "treatment": ["Continue regular crop management practices."],
-        "prevention": "Maintain proper spacing, balanced fertilization, and regular scouting.",
-    },
-    "Herbicide Growth Damage": {
-        "severity": "🟡 Medium",
-        "emoji": "⚗️",
-        "symptoms": "Cupped or strap-shaped leaves, abnormal growth patterns, epinasty (downward bending).",
-        "cause": "Herbicide drift or misapplication — commonly from 2,4-D or Dicamba on nearby fields.",
-        "treatment": [
-            "Apply foliar nutrients (Zinc sulfate 2g/L + Urea 1%)",
-            "Irrigate to help plant recover",
-            "Avoid further herbicide application near cotton",
-            "Plants usually recover if damage is mild",
-        ],
-        "prevention": "Use herbicide-tolerant varieties if available. Apply herbicides on calm days. Maintain buffer zones.",
-    },
-    "Leaf Hopper Jassids": {
-        "severity": "🟡 Medium",
-        "emoji": "🐛",
-        "symptoms": "Yellowing leaf margins (hopper burn), downward curling of leaf edges, reduced photosynthesis.",
-        "cause": "Amrasca biguttula biguttula — sucking pest that feeds on leaf undersides.",
-        "treatment": [
-            "Spray Acetamiprid (0.2g/L) or Dimethoate (2ml/L)",
-            "Apply Neem-based insecticide for organic control",
-            "Ensure good field sanitation",
-            "Economic threshold: 1–2 jassids per leaf",
-        ],
-        "prevention": "Grow hairy-leaf varieties. Avoid excess nitrogen. Encourage natural predators (ladybugs, lacewings).",
-    },
-    "Leaf Reddening": {
-        "severity": "🟠 Low–Medium",
-        "emoji": "🍁",
-        "symptoms": "Premature reddening/purpling of leaves, often starting from lower canopy, early senescence.",
-        "cause": "Nutrient deficiency (Mg, K), waterlogging, heavy boll load, or mite damage.",
-        "treatment": [
-            "Foliar spray of MgSO₄ (10g/L) + KNO₃ (5g/L)",
-            "Improve drainage if waterlogged",
-            "Check for mite infestation underneath leaves",
-            "Balanced NPK fertilization",
-        ],
-        "prevention": "Soil test before sowing. Ensure adequate potassium and magnesium. Avoid water stress.",
-    },
-    "Leaf Variegation": {
-        "severity": "🟢 Low",
-        "emoji": "🎨",
-        "symptoms": "Irregular light and dark green patches on leaves, mosaic-like patterns, mild chlorosis.",
-        "cause": "Genetic factors, mild viral infection, or nutrient imbalance.",
-        "treatment": [
-            "If viral: control whitefly vectors",
-            "Foliar application of micronutrients (Zn, Fe, Mn)",
-            "Monitor for progression to more severe symptoms",
-            "Usually does not significantly affect yield",
-        ],
-        "prevention": "Use quality seeds from certified sources. Maintain balanced soil fertility.",
-    },
-    "Fusarium Wilt": {
-        "severity": "🔴 High",
-        "emoji": "🍂",
-        "symptoms": "Wilting of branches (often one-sided), browning of vascular tissue, yellowing & drooping of leaves, plant death.",
-        "cause": "Fusarium oxysporum f. sp. vasinfectum — soil-borne fungus persisting for years.",
-        "treatment": [
-            "No effective chemical cure once infected",
-            "Uproot and burn infected plants",
-            "Apply Trichoderma viride (5g/kg seed) as biocontrol",
-            "Soil drenching with Carbendazim (1g/L) around healthy plants",
-        ],
-        "prevention": "Grow resistant varieties. Long crop rotation (3+ years). Avoid wounding roots during cultivation. Improve soil drainage.",
-    },
-}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# MODEL LOADING & INFERENCE (Real)
-# ══════════════════════════════════════════════════════════════════════════════
-@st.cache_resource
-def load_model(model_name, dataset_name):
-    """
-    Load a trained PyTorch model from saved_models/ directory.
-    Only called when USE_REAL_MODEL = True.
-
-    Expected path format:
-        saved_models/SAR-CLD_2024/DenseNet121_best.pt
-        saved_models/Cotton_Leaf_Disease/ResNet50_best.pt
-    """
-    import torch
-    import torch.nn as nn
-    from torchvision import models
-
-    dataset_folder = dataset_name.replace(" ", "_").replace("-", "-")
-    if dataset_name == "SAR-CLD 2024":
-        dataset_folder = "SAR-CLD_2024"
-        num_classes = 7
-    else:
-        dataset_folder = "Cotton_Leaf_Disease"
-        num_classes = 4
-
-    # Map display names to filename-safe names
-    name_map = {
-        "ResNet50": "ResNet50",
-        "DenseNet121": "DenseNet121",
-        "EfficientNetB7": "EfficientNetB7",
-        "ViT-B/16": "ViT_B16",
-        "Swin-T": "Swin_T",
-        "ConvNeXt-T": "ConvNeXt_T",
-    }
-    safe_name = name_map.get(model_name, model_name)
-    model_path = f"saved_models/{dataset_folder}/{safe_name}_best.pt"
-
-    # Build model architecture (same as your training code)
-    if model_name == "ResNet50":
-        m = models.resnet50(weights=None)
-        m.fc = nn.Linear(m.fc.in_features, num_classes)
-    elif model_name == "DenseNet121":
-        m = models.densenet121(weights=None)
-        m.classifier = nn.Linear(m.classifier.in_features, num_classes)
-    elif model_name == "EfficientNetB7":
-        m = models.efficientnet_b7(weights=None)
-        in_f = m.classifier[1].in_features
-        m.classifier = nn.Sequential(
-            nn.Dropout(p=0.5, inplace=True),
-            nn.Linear(in_f, num_classes),
-        )
-    elif model_name == "ViT-B/16":
-        m = models.vit_b_16(weights=None)
-        m.heads.head = nn.Linear(m.heads.head.in_features, num_classes)
-    elif model_name == "Swin-T":
-        m = models.swin_t(weights=None)
-        m.head = nn.Linear(m.head.in_features, num_classes)
-    elif model_name == "ConvNeXt-T":
-        m = models.convnext_tiny(weights=None)
-        in_f = m.classifier[2].in_features
-        m.classifier[2] = nn.Linear(in_f, num_classes)
-    else:
-        st.error(f"Unknown model: {model_name}")
-        return None
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    m.load_state_dict(torch.load(model_path, map_location=device))
-    m.to(device)
-    m.eval()
-    return m
-
-
-def real_predict(model, image_pil, model_name, class_names):
-    """Run real inference using a loaded PyTorch model."""
-    import torch
-    import torch.nn.functional as F
-    from torchvision import transforms
-
-    img_size = 600 if model_name == "EfficientNetB7" else 224
-
-    transform = transforms.Compose([
-        transforms.Resize((img_size, img_size)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-    ])
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    img_tensor = transform(image_pil.convert("RGB")).unsqueeze(0).to(device)
-
-    start = time.time()
-    with torch.no_grad():
-        logits = model(img_tensor)
-        probs = F.softmax(logits, dim=1).cpu().numpy()[0]
-    inference_ms = (time.time() - start) * 1000
-
-    pred_idx = int(np.argmax(probs))
-    return {
-        "predicted": class_names[pred_idx],
-        "confidence": float(probs[pred_idx]),
-        "probabilities": {cn: float(probs[i]) for i, cn in enumerate(class_names)},
-        "inference_time": round(inference_ms, 1),
-    }
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SIMULATED INFERENCE (Demo mode when no .pt files available)
-# ══════════════════════════════════════════════════════════════════════════════
-def simulated_predict(class_names):
-    """Generate realistic-looking fake predictions for demo/prototype."""
-    n = len(class_names)
-    winner = np.random.randint(n)
-    probs = np.array([
-        (0.7 + np.random.random() * 0.25) if i == winner else np.random.random() * 0.05
-        for i in range(n)
-    ])
-    probs /= probs.sum()
-    return {
-        "predicted": class_names[winner],
-        "confidence": float(probs[winner]),
-        "probabilities": {cn: float(probs[i]) for i, cn in enumerate(class_names)},
-        "inference_time": round(80 + np.random.random() * 120, 1),
-    }
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CHATBOT RESPONSES
-# ══════════════════════════════════════════════════════════════════════════════
-def get_chat_response(msg: str) -> str:
-    lower = msg.lower()
-
-    if any(w in lower for w in ["curl", "clcuv"]) and any(w in lower for w in ["treat", "cure", "solution", "fix", "spray"]):
-        return (
-            "🦟 **Cotton Leaf Curl Virus (CLCuV) Management:**\n\n"
-            "1. **Spray Imidacloprid** (0.5ml/L) or **Thiamethoxam** to kill whiteflies\n"
-            "2. **Neem oil** (5ml/L) as organic repellent\n"
-            "3. **Remove severely infected plants** and burn them\n"
-            "4. **Yellow sticky traps** — 20–25 per acre\n\n"
-            "🛡️ **Prevention:** Plant resistant varieties, sow early (April–May), monitor whitefly weekly."
-        )
-    if any(w in lower for w in ["curl", "clcuv"]):
-        return (
-            "🍃 **Cotton Leaf Curl Virus (CLCuV)** is one of the most devastating diseases for cotton in Pakistan. "
-            "It causes upward/downward curling, stunted growth, and up to **80% yield loss**. "
-            "Transmitted by **whiteflies** (Bemisia tabaci). Would you like treatment or prevention tips?"
-        )
-    if "blight" in lower and any(w in lower for w in ["treat", "solution", "fix", "spray"]):
-        return (
-            "💊 **Bacterial Blight Treatment:**\n\n"
-            "1. Spray **Copper oxychloride** (3g/L) or **Streptocycline** (0.5g/L)\n"
-            "2. Remove and destroy infected debris\n"
-            "3. Use disease-free certified seeds\n"
-            "4. Avoid overhead irrigation\n\n"
-            "💡 **Tip:** Treat seeds with Carboxin + Thiram before sowing."
-        )
-    if "blight" in lower:
-        return (
-            "🔬 **Bacterial Blight** is caused by *Xanthomonas citri pv. malvacearum*. "
-            "Look for angular water-soaked lesions turning brown/black. "
-            "Spreads through rain and contaminated seeds. Want treatment advice?"
-        )
-    if "whitefl" in lower:
-        return (
-            "🦟 **Whitefly Control:**\n\n"
-            "1. 💊 Imidacloprid, Thiamethoxam, or Spiromesifen\n"
-            "2. 🌿 Neem oil (5ml/L), yellow sticky traps\n"
-            "3. 🐞 Encourage Encarsia formosa parasitoid\n"
-            "4. 🌾 Remove weeds, avoid excess nitrogen\n\n"
-            "Monitor weekly — ETL: 5–8 adults per leaf."
-        )
-    if any(w in lower for w in ["wilt", "fusarium"]):
-        return (
-            "🍂 **Fusarium Wilt** — soil-borne, **no chemical cure** once infected.\n\n"
-            "1. Uproot & burn infected plants\n"
-            "2. Apply **Trichoderma viride** (5g/kg seed)\n"
-            "3. Long crop rotation (3+ years)\n"
-            "4. Grow **resistant varieties**\n\n"
-            "⚠️ Prevention is the only real defense!"
-        )
-    if "healthy" in lower:
-        return (
-            "✅ A healthy cotton plant shows green, turgid leaves.\n\n"
-            "Keep up: 🔍 Regular scouting (2x/week) • 🧪 Balanced NPK • 💧 Proper irrigation • 🧹 Field hygiene"
-        )
-    if any(w in lower for w in ["model", "accuracy", "which model", "best model"]):
-        return (
-            "📊 **Model Performance:**\n\n"
-            "🥇 **DenseNet121** — 98.36% (7M params)\n"
-            "🥈 **Swin-T** — 98.36% (27.5M params)\n"
-            "🥉 **ResNet50** — 97.90% (23.5M params)\n"
-            "4️⃣ ConvNeXt-T — 97.66%\n"
-            "5️⃣ ViT-B/16 — 95.79%\n\n"
-            "DenseNet121 offers the best accuracy-to-efficiency ratio!"
-        )
-    if any(w in lower for w in ["dataset", "sar-cld", "classes"]):
-        return (
-            "📁 **Datasets Used:**\n\n"
-            "🔵 **SAR-CLD 2024** — 7 classes: Bacterial Blight, Curl Virus, Healthy, "
-            "Herbicide Damage, Jassids, Leaf Reddening, Leaf Variegation\n\n"
-            "🟢 **Cotton Leaf Disease** — 4 classes: Bacterial Blight, Curl Virus, Fusarium Wilt, Healthy"
-        )
-    if any(w in lower for w in ["jassid", "hopper"]):
-        return (
-            "🐛 **Leaf Hopper Jassids** cause 'hopper burn' — yellowing margins.\n\n"
-            "1. Spray Acetamiprid (0.2g/L) or Dimethoate\n"
-            "2. Neem-based organic spray\n"
-            "3. ETL: 1–2 jassids per leaf\n\n"
-            "🛡️ Grow hairy-leaf varieties, avoid excess nitrogen."
-        )
-    if any(w in lower for w in ["redden", "purple", "red leaf"]):
-        return (
-            "🍁 **Leaf Reddening** — premature purpling from lower canopy.\n\n"
-            "**Causes:** Mg/K deficiency, waterlogging, mites\n"
-            "**Fix:** MgSO₄ (10g/L) + KNO₃ (5g/L) spray. Improve drainage."
-        )
-    if any(w in lower for w in ["hello", "hi", "hey", "salam", "assalam"]):
-        return (
-            "Wa Alaikum Assalam! 🌿✨\n\n"
-            "Welcome to Cotton Guard! I can help with:\n\n"
-            "🔍 Disease identification\n"
-            "💊 Treatment & prevention\n"
-            "🦟 Pest management\n"
-            "📊 Model & dataset info\n\n"
-            "Just ask away!"
-        )
-    if "thank" in lower:
-        return "You're welcome! 🌱💚 Wishing you a healthy and productive cotton season!"
-    if any(w in lower for w in ["help", "what can you"]):
-        return (
-            "🌿 **I can help with:**\n\n"
-            "🔍 Disease identification\n"
-            "💊 Treatment plans (chemical & organic)\n"
-            "🛡️ Prevention strategies\n"
-            "🦟 Whitefly & pest management\n"
-            "📊 Model accuracy & comparison\n"
-            "📁 Dataset details\n\n"
-            "Describe your problem or ask a question!"
-        )
-    return (
-        "🌿 I'm your cotton crop assistant! Try asking:\n\n"
-        "• \"How to treat curl virus?\"\n"
-        "• \"What causes bacterial blight?\"\n"
-        "• \"Whitefly control methods\"\n"
-        "• \"Which model is best?\""
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# STREAMLIT PAGE CONFIG & STYLING
-# ══════════════════════════════════════════════════════════════════════════════
-st.set_page_config(
-    page_title="Cotton Guard — Disease Detection",
-    page_icon="🌿",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# ── Custom CSS ──
+# ─── Warm Earthy Theme CSS ─────────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* ── Global ── */
-    .stApp {
-        background: linear-gradient(135deg, #0a0f1c 0%, #0d1525 40%, #0f1a2e 100%);
-    }
-    
-    /* ── Sidebar ── */
-    section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0c1222 0%, #111827 100%);
-        border-right: 1px solid rgba(99, 102, 241, 0.15);
-    }
-    section[data-testid="stSidebar"] .stMarkdown p,
-    section[data-testid="stSidebar"] .stMarkdown li {
-        color: #cbd5e1;
-    }
-    
-    /* ── Headers ── */
-    h1, h2, h3 { color: #f1f5f9 !important; }
-    
-    /* ── Cards ── */
-    .css-card {
-        background: linear-gradient(135deg, rgba(15,23,42,0.7), rgba(20,30,50,0.6));
-        border: 1px solid rgba(51,65,85,0.4);
-        border-radius: 16px;
-        padding: 20px;
-        margin-bottom: 16px;
-        backdrop-filter: blur(20px);
-    }
-    
-    /* ── Metric Cards ── */
-    .metric-card {
-        border-radius: 14px;
-        padding: 16px;
-        text-align: center;
-    }
-    .metric-label {
-        font-size: 11px;
-        color: #64748b;
-        text-transform: uppercase;
-        letter-spacing: 1.5px;
-        margin-bottom: 4px;
-    }
-    .metric-value {
-        font-size: 20px;
-        font-weight: 800;
-    }
-    
-    /* ── Disease Cards ── */
-    .symptom-card {
-        background: rgba(255,107,107,0.06);
-        border: 1px solid rgba(255,107,107,0.15);
-        border-radius: 14px;
-        padding: 16px;
-        margin-bottom: 10px;
-    }
-    .cause-card {
-        background: rgba(255,165,2,0.06);
-        border: 1px solid rgba(255,165,2,0.15);
-        border-radius: 14px;
-        padding: 16px;
-        margin-bottom: 10px;
-    }
-    .treatment-card {
-        background: rgba(46,213,115,0.06);
-        border: 1px solid rgba(46,213,115,0.15);
-        border-radius: 14px;
-        padding: 16px;
-        margin-bottom: 10px;
-    }
-    .prevention-card {
-        background: rgba(99,102,241,0.08);
-        border: 1px solid rgba(99,102,241,0.2);
-        border-radius: 14px;
-        padding: 16px;
-        margin-bottom: 10px;
-    }
-    
-    /* ── Probability Bar ── */
-    .prob-bar-bg {
-        background: rgba(30,41,59,0.6);
-        border-radius: 6px;
-        height: 10px;
-        overflow: hidden;
-    }
-    .prob-bar-fill {
-        height: 100%;
-        border-radius: 6px;
-        transition: width 1s ease;
-    }
-    
-    /* ── Chat ── */
-    .chat-msg-bot {
-        background: linear-gradient(135deg, rgba(30,41,59,0.8), rgba(40,50,70,0.6));
-        border: 1px solid rgba(99,102,241,0.15);
-        border-radius: 16px 16px 16px 4px;
-        padding: 12px 16px;
-        color: #e2e8f0;
-        font-size: 14px;
-        line-height: 1.65;
-        margin-bottom: 12px;
-    }
-    .chat-msg-user {
-        background: linear-gradient(135deg, #0ea5e9, #2563eb);
-        border-radius: 16px 16px 4px 16px;
-        padding: 12px 16px;
-        color: #ffffff;
-        font-size: 14px;
-        line-height: 1.65;
-        margin-bottom: 12px;
-        text-align: right;
-    }
-    
-    /* ── Buttons ── */
-    .stButton > button {
-        border-radius: 12px !important;
-        font-weight: 600 !important;
-        transition: all 0.3s ease !important;
-    }
-    
-    /* ── File Uploader ── */
-    .stFileUploader {
-        border-radius: 16px;
-    }
-    
-    /* ── Selectbox ── */
-    .stSelectbox label { color: #94a3b8 !important; font-weight: 600 !important; }
-    
-    /* ── Dividers ── */
-    hr { border-color: rgba(51,65,85,0.3) !important; }
-    
-    /* ── Scrollbar ── */
-    ::-webkit-scrollbar { width: 5px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-    
-    /* ── Hide default Streamlit elements ── */
-    #MainMenu { visibility: hidden; }
-    footer { visibility: hidden; }
-    
-    /* ── Tag badges ── */
-    .tag-badge {
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 600;
-        margin-right: 6px;
-    }
-    
-    /* ── Section Label ── */
-    .section-label {
-        font-size: 11px;
-        color: #94a3b8;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-        font-weight: 700;
-        margin-bottom: 10px;
-    }
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Nunito:wght@300;400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap');
+.stApp { background: #e8efe2; font-family: 'Nunito', sans-serif; }
+.app-header { text-align:center; padding:1.5rem 0 0.5rem; }
+.app-header h1 { font-family:'DM Serif Display',serif; font-size:2.6rem; color:#2d5016; margin:0; }
+.app-header .subtitle { color:#7a8b6e; font-size:0.95rem; margin-top:0.2rem; }
+.header-divider { width:80px; height:3px; background:linear-gradient(90deg,#8b6914,#2d5016,#8b6914); margin:0.8rem auto 1.5rem; border-radius:2px; }
+.earth-card { background:#d9e4cf; border:1px solid #b8c9a8; border-radius:14px; padding:1.4rem; margin-bottom:1rem; box-shadow:0 2px 12px rgba(45,80,22,0.08); }
+.earth-card-header { font-family:'Fira Code',monospace; font-size:0.68rem; font-weight:500; color:#8b6914; text-transform:uppercase; letter-spacing:2.5px; margin-bottom:0.8rem; padding-bottom:0.5rem; border-bottom:1px solid #c5d4b5; }
+.prediction-box { background:linear-gradient(135deg,#c8ddb8,#b8d0a5); border:1px solid #8baf72; border-left:4px solid #2d5016; border-radius:12px; padding:1.2rem 1.5rem; margin:0.8rem 0; }
+.prediction-label { font-size:0.68rem; font-weight:700; color:#2d5016; text-transform:uppercase; letter-spacing:2.5px; }
+.prediction-name { font-family:'DM Serif Display',serif; font-size:1.8rem; color:#1a3a0a; margin:0.3rem 0 0.1rem; }
+.prediction-index { font-size:0.82rem; color:#5a6650; }
+.disease-box { background:linear-gradient(135deg,#efe0c0,#e8d5a8); border:1px solid #d4a843; border-left:4px solid #8b6914; border-radius:12px; padding:1.2rem 1.5rem; margin:0.8rem 0; }
+.disease-label { font-size:0.68rem; font-weight:700; color:#8b6914; text-transform:uppercase; letter-spacing:2.5px; }
+.confidence-section { text-align:center; padding:0.8rem 0; }
+.confidence-pct { font-family:'DM Serif Display',serif; font-size:2.8rem; line-height:1; }
+.metric-row { display:flex; gap:0.7rem; flex-wrap:wrap; margin:0.8rem 0; }
+.metric-card { flex:1; min-width:110px; background:#cddabe; border:1px solid #b8c9a8; border-radius:10px; padding:0.7rem 0.5rem; text-align:center; }
+.metric-card .metric-label { font-size:0.6rem; color:#8b6914; text-transform:uppercase; letter-spacing:1.5px; font-weight:600; }
+.metric-card .metric-value { font-size:0.95rem; font-weight:700; color:#2d3a1e; margin-top:0.15rem; font-family:'Fira Code',monospace; }
+.prob-item { display:flex; align-items:center; margin:0.45rem 0; gap:0.7rem; }
+.prob-name { width:170px; font-size:0.8rem; color:#3a4a30; font-weight:600; text-align:right; flex-shrink:0; }
+.prob-bar-bg { flex:1; height:10px; background:#c5d4b5; border-radius:5px; overflow:hidden; }
+.prob-bar-fill { height:100%; border-radius:5px; transition:width 0.5s ease; }
+.prob-pct { width:48px; font-size:0.75rem; color:#5a6650; font-family:'Fira Code',monospace; text-align:right; flex-shrink:0; }
+.info-card { background:#cddabe; border:1px solid #b8c9a8; border-radius:10px; padding:1rem 1.2rem; margin:0.5rem 0; }
+.info-card h4 { color:#2d5016; font-size:0.88rem; margin:0 0 0.35rem 0; font-weight:700; }
+.info-card p { color:#3a4a30; font-size:0.82rem; margin:0; line-height:1.6; }
+.info-card-warn h4 { color:#8b6914; }
+div[data-testid="stFileUploader"] { background:#d9e4cf; border:2px dashed #a8b898; border-radius:14px; padding:1rem; }
+div[data-testid="stFileUploader"]:hover { border-color:#8b6914; }
+section[data-testid="stSidebar"] { background:#2d3a1e !important; }
+section[data-testid="stSidebar"] .stMarkdown p, section[data-testid="stSidebar"] .stMarkdown li { color:#d4dccb !important; }
+div[data-testid="stSelectbox"] > div > div { background:#d9e4cf !important; border-color:#b8c9a8 !important; }
+div[data-testid="stMainBlockContainer"] { background:#e8efe2 !important; }
+.stSelectbox label { color:#5a6650 !important; font-family:'Fira Code',monospace !important; font-size:0.68rem !important; text-transform:uppercase; letter-spacing:2px; }
+.stButton > button[kind="primary"] { background:linear-gradient(135deg,#2d5016,#3d6b20) !important; color:white !important; border:none !important; border-radius:10px !important; font-weight:700 !important; font-size:1rem !important; }
+.stButton > button[kind="primary"]:hover { background:linear-gradient(135deg,#3d6b20,#4a8028) !important; }
+.stProgress > div > div { background-color:#2d5016 !important; }
+#MainMenu {visibility:hidden;} footer {visibility:hidden;} .stDeployButton {display:none;}
 </style>
 """, unsafe_allow_html=True)
 
+# ─── Constants ─────────────────────────────────────────────────────────────
+SAR_CLD_CLASSES = ["Bacterial Blight","Curl Virus","Healthy Leaf","Herbicide Growth Damage","Leaf Hopper Jassids","Leaf Redding","Leaf Variegation"]
+COTTON_LEAF_CLASSES = ["Bacterial Blight","Curl Virus","Fussarium Wilt","Healthy"]
+DATASET_INFO = {
+    "SAR-CLD 2024 — 7 Classes": {"classes":SAR_CLD_CLASSES,"model_file":"models/swin_t_best.pt","architecture":"LDASN (Lightweight Dynamic Attention)","arch_key":"Swin_T","img_size":64},
+    "Cotton Leaf Disease — 4 Classes": {"classes":COTTON_LEAF_CLASSES,"model_file":"models/convnext_t_best.pt","architecture":"ConvNeXt Tiny (ConvNeXt-T)","arch_key":"ConvNeXt_T","img_size":224},
+}
+DISEASE_INFO = {
+    "Bacterial Blight": {"severity":"High","icon":"🔴","description":"Angular water-soaked lesions on leaves that turn brown. Causes defoliation and boll rot.","symptoms":"Water-soaked angular spots, blackening of veins, premature defoliation.","treatment":"Use copper-based bactericides. Plant resistant varieties. Remove and destroy infected debris.","prevention":"Use certified disease-free seeds, crop rotation with non-host crops, avoid overhead irrigation."},
+    "Curl Virus": {"severity":"Very High","icon":"🔴","description":"Transmitted by whiteflies, causes upward or downward curling of leaves, stunted growth, and severe yield loss.","symptoms":"Leaf curling, thickened veins, enation (leaf-like outgrowths), stunted plants, reduced boll formation.","treatment":"Control whitefly vectors with insecticides (imidacloprid, acetamiprid). Remove infected plants early. Use sticky traps.","prevention":"Plant resistant varieties (BT cotton with CLCuV tolerance), early sowing, maintain field hygiene."},
+    "Healthy Leaf": {"severity":"None","icon":"🟢","description":"The leaf appears healthy with no visible signs of disease or pest damage.","symptoms":"No symptoms — uniform green color, normal leaf shape and size.","treatment":"No treatment needed. Continue regular crop management.","prevention":"Maintain balanced nutrition, proper irrigation scheduling, and regular scouting."},
+    "Healthy": {"severity":"None","icon":"🟢","description":"The leaf appears healthy with no visible signs of disease or pest damage.","symptoms":"No symptoms — uniform green color, normal leaf shape and size.","treatment":"No treatment needed. Continue regular crop management.","prevention":"Maintain balanced nutrition, proper irrigation scheduling, and regular scouting."},
+    "Herbicide Growth Damage": {"severity":"Medium","icon":"🟡","description":"Damage from herbicide drift or misapplication, resulting in abnormal leaf growth.","symptoms":"Cupped or strapped leaves, abnormal growth, epinasty, chlorosis.","treatment":"Foliar application of growth regulators. Provide adequate irrigation and nutrition.","prevention":"Proper herbicide application techniques, avoid spraying on windy days, calibrate sprayers."},
+    "Leaf Hopper Jassids": {"severity":"Medium-High","icon":"🟠","description":"Jassids suck cell sap from leaves causing yellowing and curling of leaf margins.","symptoms":"Yellowing of leaf margins, downward curling, hopper burn in severe cases.","treatment":"Apply systemic insecticides (thiamethoxam, imidacloprid). Use neem-based sprays.","prevention":"Use resistant varieties, intercropping, maintain natural predators."},
+    "Leaf Redding": {"severity":"Medium","icon":"🟡","description":"Reddening of leaves due to nutrient deficiency (often magnesium) or physiological stress.","symptoms":"Reddish-purple discoloration, starting from lower leaves and moving upward.","treatment":"Foliar application of magnesium sulphate. Correct nutrient imbalances.","prevention":"Regular soil testing, balanced NPK application."},
+    "Leaf Variegation": {"severity":"Medium","icon":"🟡","description":"Irregular patches of different colors on leaves, often caused by viral infections.","symptoms":"Mosaic patterns, irregular light and dark green patches, sometimes yellow streaks.","treatment":"Remove severely affected plants. Control insect vectors.","prevention":"Use virus-free planting material, control aphid and whitefly vectors."},
+    "Fussarium Wilt": {"severity":"High","icon":"🔴","description":"Soil-borne fungal disease that blocks water-conducting vessels, causing wilting and death.","symptoms":"Yellowing on one side, wilting despite adequate moisture, brown vascular tissue.","treatment":"Remove and destroy infected plants. Soil solarization. Trichoderma biocontrol.","prevention":"Use resistant varieties, long crop rotation (3+ years), avoid waterlogging."},
+}
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SESSION STATE INIT
-# ══════════════════════════════════════════════════════════════════════════════
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = [
-        {"role": "assistant", "content": "Assalam o Alaikum! 🌿✨ I'm your Cotton Guard Assistant. Ask me about diseases, treatments, prevention, or anything about your cotton crop!"}
-    ]
-if "prediction" not in st.session_state:
-    st.session_state.prediction = None
+# ─── LDASN Architecture ───────────────────────────────────────────────────
+class DepthwiseSeparableConv(nn.Module):
+    def __init__(s,ic,oc,k,st=1,p=0):
+        super().__init__(); s.dw=nn.Conv2d(ic,ic,k,st,p,groups=ic,bias=False); s.pw=nn.Conv2d(ic,oc,1,bias=False); s.bn=nn.BatchNorm2d(oc)
+    def forward(s,x): return s.bn(s.pw(s.dw(x)))
+class MultiScaleExtractor(nn.Module):
+    def __init__(s):
+        super().__init__(); s.stem=nn.Sequential(nn.Conv2d(3,32,3,stride=2,padding=1,bias=False),nn.BatchNorm2d(32))
+        s.scale1=nn.Sequential(DepthwiseSeparableConv(32,64,3,2,1),DepthwiseSeparableConv(64,64,3,1,1))
+        s.scale2=nn.Sequential(DepthwiseSeparableConv(32,64,5,2,2),DepthwiseSeparableConv(64,64,5,1,2))
+        s.merge_se=nn.ModuleDict({'fc':nn.Sequential(nn.AdaptiveAvgPool2d(1),nn.Flatten(),nn.Linear(128,8),nn.ReLU(),nn.Linear(8,128),nn.Sigmoid())})
+        s.proj=nn.Sequential(nn.Conv2d(128,128,1,bias=False),nn.BatchNorm2d(128)); s.shallow=nn.Sequential(DepthwiseSeparableConv(32,128,1,1,0))
+    def forward(s,x):
+        stem=F.relu(s.stem(x)); s1=F.relu(s.scale1(stem)); s2=F.relu(s.scale2(stem)); m=torch.cat([s1,s2],1)
+        return F.relu(s.proj(m*s.merge_se['fc'](m).unsqueeze(-1).unsqueeze(-1))), stem
+class PatchSelector(nn.Module):
+    def __init__(s,fd=128,ed=256,np_=49):
+        super().__init__(); s.saliency=nn.Conv2d(fd,1,1); s.proj=nn.Linear(32768,ed); s.pos_emb=nn.Embedding(np_,ed); s.register_buffer('pos_ids',torch.arange(np_))
+    def forward(s,x):
+        B=x.shape[0]; t=(x*torch.sigmoid(s.saliency(x))).flatten(2).transpose(1,2).reshape(B,-1)
+        t=s.proj(t).unsqueeze(1); p=s.pos_emb(s.pos_ids).unsqueeze(0); n=min(t.shape[1],p.shape[1]); return t[:,:n]+p[:,:n]
+class TransformerBlock(nn.Module):
+    def __init__(s,d=256,h=8,r=2):
+        super().__init__(); s.norm1=nn.LayerNorm(d); s.attn=nn.MultiheadAttention(d,h,batch_first=True); s.norm2=nn.LayerNorm(d); s.mlp=nn.Sequential(nn.Linear(d,d*r),nn.GELU(),nn.Dropout(0.1),nn.Linear(d*r,d))
+    def forward(s,x): xn=s.norm1(x); x=x+s.attn(xn,xn,xn)[0]; return x+s.mlp(s.norm2(x))
+class LDASNTransformer(nn.Module):
+    def __init__(s,d=256,dp=4,h=8):
+        super().__init__(); s.cls_token=nn.Parameter(torch.randn(1,1,d)); s.blocks=nn.ModuleList([TransformerBlock(d,h) for _ in range(dp)]); s.norm=nn.LayerNorm(d)
+    def forward(s,x):
+        x=torch.cat([s.cls_token.expand(x.shape[0],-1,-1),x],1)
+        for b in s.blocks: x=b(x)
+        return s.norm(x[:,0])
+class ClassificationHead(nn.Module):
+    def __init__(s,d=256,nc=7): super().__init__(); s.temperature=nn.Parameter(torch.ones(1)); s.fc=nn.Linear(d,nc)
+    def forward(s,x): return s.fc(x)/s.temperature
+class LDASN(nn.Module):
+    def __init__(s,nc=7):
+        super().__init__(); s.extractor=MultiScaleExtractor(); s.selector=PatchSelector(128,256,49); s.transformer=LDASNTransformer(256,4,8); s.head=ClassificationHead(256,nc)
+    def forward(s,x): f,_=s.extractor(x); return s.head(s.transformer(s.selector(f)))
 
+# ─── Model Loading ─────────────────────────────────────────────────────────
+@st.cache_resource
+def load_model(arch_key, model_path, num_classes):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if arch_key == "Swin_T": model = LDASN(num_classes)
+    else: model = models.convnext_tiny(weights=None); model.classifier[2] = nn.Linear(model.classifier[2].in_features, num_classes)
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False)); model.to(device).eval(); return model, device
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SIDEBAR — CHATBOT
-# ══════════════════════════════════════════════════════════════════════════════
+def predict(model, image, device, class_names, img_size=224):
+    tf = transforms.Compose([transforms.Resize((img_size,img_size)),transforms.ToTensor(),transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])])
+    start = time.time()
+    with torch.no_grad(): probs = F.softmax(model(tf(image).unsqueeze(0).to(device)),1).cpu().numpy()[0]
+    idx = int(np.argmax(probs))
+    return {"class":class_names[idx],"index":idx,"confidence":float(probs[idx]),"probabilities":{cn:float(probs[i]) for i,cn in enumerate(class_names)},"inference_time_ms":(time.time()-start)*1000}
+
+# ─── AI Chatbot (Groq) ────────────────────────────────────────────────────
+SYSTEM_PROMPT = """You are Cotton Guard Assistant — an AI expert on cotton leaf diseases for Pakistani cotton farmers.
+APP: Cotton Guard detects cotton leaf diseases via deep learning. Users upload leaf photos for instant diagnosis.
+MODELS: SAR-CLD 2024 (7 classes, LDASN, 64x64, ~98.4% acc) | Cotton Leaf Disease (4 classes, ConvNeXt-T, 224x224, ~97.7% acc).
+TRAINING: 80/20 split, Focal Loss, AdamW, Cosine LR, augmentation, early stopping.
+DISEASES: Bacterial Blight (High), Curl Virus/CLCuV (Very High), Fussarium Wilt (High), Herbicide Damage (Medium), Jassids (Medium-High), Leaf Redding (Medium), Leaf Variegation (Medium).
+RULES: Only answer about cotton diseases/farming/this app. Redirect unrelated questions politely. Be concise, farmer-friendly. Support Urdu/Roman Urdu. Never make up info."""
+
+def get_ai_response(user_msg, chat_history):
+    import requests
+    api_key = st.secrets.get("GROQ_API_KEY", "")
+    if not api_key: return "⚠️ Please add GROQ_API_KEY to Streamlit secrets."
+    messages = [{"role":"system","content":SYSTEM_PROMPT}] + [{"role":m["role"],"content":m["content"]} for m in chat_history[-10:]] + [{"role":"user","content":user_msg}]
+    try:
+        r = requests.post("https://api.groq.com/openai/v1/chat/completions", json={"model":"llama-3.3-70b-versatile","messages":messages,"temperature":0.7,"max_tokens":500},
+            headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"}, timeout=15).json()
+        return r["choices"][0]["message"]["content"] if "choices" in r else f"⚠️ {r.get('error',{}).get('message','Error')}"
+    except: return "⚠️ Connection error. Please try again."
+
+# ╔═══════════════════════ SIDEBAR — CHATBOT ═══════════════════════════════╗
 with st.sidebar:
-    # Chat Header
-    st.markdown("""
-    <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
-        <div style="width:42px; height:42px; border-radius:12px;
-                    background:linear-gradient(135deg, #6366f1, #8b5cf6, #a855f7);
-                    display:flex; align-items:center; justify-content:center;
-                    box-shadow: 0 0 20px rgba(99,102,241,0.4);">
-            <span style="font-size:20px;">🤖</span>
-        </div>
-        <div>
-            <div style="font-size:16px; font-weight:700; color:#e2e8f0;">Crop Assistant</div>
-            <div style="font-size:11px; color:#22c55e;">● Online — Ask me anything</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # Chat Messages
-    chat_container = st.container(height=420)
-    with chat_container:
+    st.markdown("""<div style="text-align:center;padding:0.5rem 0 0.8rem;"><span style="font-size:2rem;">🍃</span>
+    <h2 style="font-family:'DM Serif Display',serif;color:#e8f0e0;margin:0.2rem 0 0;">Cotton Guard</h2>
+    <p style="color:#a8b89e;font-size:0.78rem;margin:0;">AI Assistant</p></div>
+    <hr style="border:none;border-top:1px solid #3d4e2e;margin:0 0 1rem;">""", unsafe_allow_html=True)
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = [{"role":"assistant","content":"Assalam o Alaikum! 👋\n\nI'm your Cotton Guard Assistant. I can help with:\n\n🌿 Disease identification\n💊 Treatment advice\n🔬 How this app works\n\nAsk me anything about cotton crops!"}]
+    chat_box = st.container(height=400)
+    with chat_box:
         for msg in st.session_state.chat_history:
-            if msg["role"] == "assistant":
-                st.markdown(f'<div class="chat-msg-bot">{msg["content"]}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div class="chat-msg-user">{msg["content"]}</div>', unsafe_allow_html=True)
-
-    # Quick Action Buttons
-    st.markdown('<p class="section-label">⚡ Quick Questions</p>', unsafe_allow_html=True)
-    qcols = st.columns(2)
-    quick_questions = [
-        ("🦟 Curl Virus", "How to treat curl virus?"),
-        ("🐛 Whitefly", "Whitefly control methods"),
-        ("📊 Models", "Which model is best?"),
-        ("💡 Help", "What can you help with?"),
-    ]
-    for i, (label, question) in enumerate(quick_questions):
-        with qcols[i % 2]:
-            if st.button(label, key=f"quick_{i}", use_container_width=True):
-                st.session_state.chat_history.append({"role": "user", "content": question})
-                response = get_chat_response(question)
-                st.session_state.chat_history.append({"role": "assistant", "content": response})
-                st.rerun()
-
-    st.markdown("---")
-
-    # Chat Input
+            with st.chat_message(msg["role"], avatar="🌿" if msg["role"]=="assistant" else "👤"):
+                st.markdown(msg["content"])
     user_input = st.chat_input("Ask about cotton diseases...", key="chat_input")
     if user_input:
-        st.session_state.chat_history.append({"role": "user", "content": user_input})
-        response = get_chat_response(user_input)
-        st.session_state.chat_history.append({"role": "assistant", "content": response})
-        st.rerun()
+        st.session_state.chat_history.append({"role":"user","content":user_input})
+        with st.spinner("Thinking..."): response = get_ai_response(user_input, st.session_state.chat_history)
+        st.session_state.chat_history.append({"role":"assistant","content":response}); st.rerun()
 
+# ╔═══════════════════════ MAIN AREA ═══════════════════════════════════════╗
+st.markdown("""<div class="app-header"><h1>🍃 Cotton Guard</h1><p class="subtitle">Deep Learning Cotton Leaf Disease Detection for Farmers</p></div><div class="header-divider"></div>""", unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# MAIN PANEL
-# ══════════════════════════════════════════════════════════════════════════════
+# Dataset Selection
+st.markdown('<div class="earth-card"><div class="earth-card-header">📋 Select Dataset & Model</div>', unsafe_allow_html=True)
+dataset_choice = st.selectbox("Dataset", list(DATASET_INFO.keys()), label_visibility="collapsed")
+ds = DATASET_INFO[dataset_choice]
+st.markdown(f"""<div class="metric-row">
+<div class="metric-card"><div class="metric-label">Architecture</div><div class="metric-value">{ds['architecture'].split('(')[0].strip()}</div></div>
+<div class="metric-card"><div class="metric-label">Classes</div><div class="metric-value">{len(ds['classes'])}</div></div>
+<div class="metric-card"><div class="metric-label">Input Size</div><div class="metric-value">{ds['img_size']}×{ds['img_size']}</div></div>
+<div class="metric-card"><div class="metric-label">Normalization</div><div class="metric-value">ImageNet</div></div>
+</div></div>""", unsafe_allow_html=True)
 
-# ── Header ──
-st.markdown("""
-<div style="display:flex; align-items:center; gap:16px; margin-bottom:8px;">
-    <div style="width:54px; height:54px; border-radius:14px;
-                background:linear-gradient(135deg, #10b981, #059669, #047857);
-                display:flex; align-items:center; justify-content:center;
-                box-shadow: 0 0 30px rgba(16,185,129,0.4);
-                font-size: 28px;">
-        🌿
-    </div>
-    <div>
-        <h1 style="margin:0; font-size:32px; font-weight:800;
-                   background:linear-gradient(135deg, #10b981, #34d399, #6ee7b7);
-                   -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
-            Cotton Guard
-        </h1>
-        <p style="margin:0; font-size:13px; color:#64748b; letter-spacing:2px; text-transform:uppercase;">
-            AI-Powered Disease Detection for Cotton Farmers 🇵🇰
-        </p>
-    </div>
-    <div style="margin-left:auto; display:flex; gap:6px;">
-        <span class="tag-badge" style="background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3);">v1.0</span>
-        <span class="tag-badge" style="background:rgba(99,102,241,0.15); color:#818cf8; border:1px solid rgba(99,102,241,0.3);">
-            {'🟢 Real Model' if USE_REAL_MODEL else '🟡 Demo Mode'}
-        </span>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown("---")
-
-# ── Upload & Config ──
-col_upload, col_config = st.columns([3, 2])
-
-with col_upload:
-    st.markdown('<p class="section-label">📸 Upload Cotton Leaf Image</p>', unsafe_allow_html=True)
-    uploaded_file = st.file_uploader(
-        "Drop your cotton leaf image here",
-        type=["jpg", "jpeg", "png", "webp"],
-        label_visibility="collapsed",
-    )
+# Upload + Preview
+col_up, col_prev = st.columns([1,1])
+with col_up:
+    st.markdown('<div class="earth-card"><div class="earth-card-header">📷 Upload Cotton Leaf</div>', unsafe_allow_html=True)
+    uploaded_file = st.file_uploader("Upload", type=["jpg","jpeg","png","bmp","webp"], label_visibility="collapsed")
+    st.markdown('<p style="color:#7a8b6e;font-size:0.75rem;text-align:center;margin-top:0.5rem;">Upload a clear close-up photo of a single cotton leaf</p></div>', unsafe_allow_html=True)
+with col_prev:
     if uploaded_file:
-        image = Image.open(uploaded_file)
-        st.image(image, caption=f"📎 {uploaded_file.name} ({uploaded_file.size // 1024} KB)", use_container_width=True)
+        image = Image.open(uploaded_file).convert("RGB")
+        st.markdown('<div class="earth-card"><div class="earth-card-header">🖼️ Preview</div>', unsafe_allow_html=True)
+        st.image(image, caption=uploaded_file.name, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-with col_config:
-    st.markdown('<p class="section-label">🗂️ Dataset</p>', unsafe_allow_html=True)
-    dataset = st.selectbox(
-        "Dataset",
-        ["SAR-CLD 2024", "Cotton Leaf Disease"],
-        label_visibility="collapsed",
-    )
-    class_names = SAR_CLD_CLASSES if dataset == "SAR-CLD 2024" else COTTON_LEAF_CLASSES
+# Analyze
+analyze = st.button("🔬  Analyze Leaf", use_container_width=True, type="primary")
 
-    ds_info = "7 classes • SAR imagery" if dataset == "SAR-CLD 2024" else "4 classes • RGB imagery"
-    st.caption(f"📋 {ds_info}")
-
-    st.markdown('<p class="section-label">🧠 Model</p>', unsafe_allow_html=True)
-    model_name = st.selectbox(
-        "Model",
-        MODELS_LIST,
-        index=1,  # Default: DenseNet121
-        label_visibility="collapsed",
-    )
-    stats = MODEL_STATS.get(model_name, {})
-    st.caption(f"📐 {stats.get('params', '—')} params  •  ⚡ {stats.get('flops', '—')} FLOPs  •  🎯 {stats.get('acc', '—')}")
-
-    st.markdown("")
-
-    # Analyze Button
-    analyze_btn = st.button(
-        "✨ Analyze Leaf",
-        type="primary",
-        use_container_width=True,
-        disabled=uploaded_file is None,
-    )
-
-# ── Run Prediction ──
-if analyze_btn and uploaded_file:
-    with st.spinner("🔍 Analyzing leaf image..."):
-        time.sleep(1.5)  # Simulated delay for UX
-
-        if USE_REAL_MODEL:
-            try:
-                model = load_model(model_name, dataset)
-                if model is not None:
-                    image_pil = Image.open(uploaded_file)
-                    result = real_predict(model, image_pil, model_name, class_names)
-                    st.session_state.prediction = result
-                else:
-                    st.error("❌ Failed to load model.")
-            except FileNotFoundError:
-                st.error(f"❌ Model file not found! Please place your `.pt` file in `saved_models/` directory.")
-                st.info("👆 See instructions at the top of `app.py` for the expected file structure.")
-            except Exception as e:
-                st.error(f"❌ Error during inference: {e}")
-        else:
-            result = simulated_predict(class_names)
-            st.session_state.prediction = result
-
-# ── Display Results ──
-if st.session_state.prediction:
-    pred = st.session_state.prediction
-    info = DISEASE_INFO.get(pred["predicted"], {})
-    is_healthy = pred["predicted"] == "Healthy"
-
-    st.markdown("---")
-
-    # ── Prediction Banner ──
-    if is_healthy:
-        banner_bg = "rgba(46,213,115,0.1)"
-        banner_border = "rgba(46,213,115,0.3)"
-        banner_color = "#2ed573"
-    else:
-        disease_color = info.get("emoji", "⚠️")
-        banner_bg = "rgba(255,75,87,0.08)"
-        banner_border = "rgba(255,75,87,0.25)"
-        banner_color = "#ff4757"
-
-    st.markdown(f"""
-    <div style="background:{banner_bg}; border:1px solid {banner_border};
-                border-radius:20px; padding:24px; margin-bottom:20px;">
-        <div style="font-size:11px; letter-spacing:2px; text-transform:uppercase; 
-                    font-weight:700; color:{banner_color}; margin-bottom:8px;">
-            {'✅' if is_healthy else '⚠️'} Prediction Result
-        </div>
-        <div style="font-size:32px; font-weight:800; color:{banner_color}; margin-bottom:6px;">
-            {info.get('emoji', '🔍')} {pred['predicted']}
-        </div>
-        <div style="font-size:14px; color:#94a3b8;">
-            🎯 Confidence: <strong style="color:{banner_color}">{pred['confidence']*100:.1f}%</strong> &nbsp;•&nbsp;
-            ⚡ Inference: {pred['inference_time']}ms &nbsp;•&nbsp;
-            🧠 {model_name} &nbsp;•&nbsp;
-            Severity: <strong>{info.get('severity', 'N/A')}</strong>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    if not USE_REAL_MODEL:
-        st.warning("⚠️ **Demo Mode** — Predictions are simulated. Place your trained `.pt` model files in `saved_models/` and set `USE_REAL_MODEL = True` for real inference.")
-
-    # ── Confidence + Probabilities ──
-    col_conf, col_probs = st.columns([1, 2])
-
-    with col_conf:
-        st.markdown('<p class="section-label">🎯 Confidence Score</p>', unsafe_allow_html=True)
-        conf_pct = pred["confidence"] * 100
-        conf_color = "#2ed573" if conf_pct > 80 else "#ffa502" if conf_pct > 50 else "#ff4757"
-        st.markdown(f"""
-        <div class="css-card" style="text-align:center;">
-            <div style="font-size:56px; font-weight:800; color:{conf_color}; margin:10px 0;">
-                {conf_pct:.0f}%
-            </div>
-            <div style="background:rgba(30,41,59,0.6); border-radius:8px; height:12px; overflow:hidden; margin:12px 0;">
-                <div style="width:{conf_pct}%; height:100%; border-radius:8px;
-                            background:linear-gradient(90deg, {conf_color}, {conf_color}aa);
-                            box-shadow: 0 0 12px {conf_color}50;"></div>
-            </div>
-            <div style="font-size:12px; color:#64748b;">Model: {model_name}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col_probs:
-        st.markdown('<p class="section-label">📊 Class Probabilities</p>', unsafe_allow_html=True)
-        sorted_probs = sorted(pred["probabilities"].items(), key=lambda x: -x[1])
-        prob_colors = ["#6c5ce7", "#00cec9", "#fdcb6e", "#e17055", "#00b894", "#e84393", "#0984e3", "#ff7675"]
-        
-        prob_html = '<div class="css-card">'
-        for i, (cls, prob) in enumerate(sorted_probs):
-            color = prob_colors[i % len(prob_colors)]
-            bar_width = max(prob * 100, 0.8)
-            is_top = i == 0
-            prob_html += f"""
-            <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
-                <span style="width:22px; height:22px; border-radius:6px; font-size:11px; font-weight:700;
-                             background:{color}25; color:{color};
-                             display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                    {i+1}
-                </span>
-                <span style="width:160px; font-size:13px; font-weight:{'700' if is_top else '400'};
-                             color:{'#f1f5f9' if is_top else '#64748b'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-                    {cls}
-                </span>
-                <div style="flex:1;">
-                    <div class="prob-bar-bg">
-                        <div class="prob-bar-fill" style="width:{bar_width}%;
-                             background:{'linear-gradient(90deg, '+color+', '+color+'cc)' if is_top else 'rgba(71,85,105,0.6)'};
-                             {'box-shadow: 0 0 10px '+color+'50;' if is_top else ''}"></div>
-                    </div>
-                </div>
-                <span style="width:48px; text-align:right; font-size:13px; font-weight:700;
-                             color:{color if is_top else '#475569'};">
-                    {prob*100:.1f}%
-                </span>
-            </div>
-            """
-        prob_html += "</div>"
-        st.markdown(prob_html, unsafe_allow_html=True)
-
-    # ── Disease Details ──
-    if not is_healthy and info:
-        st.markdown("---")
-        st.markdown('<p class="section-label">🔬 Disease Information</p>', unsafe_allow_html=True)
-
-        # Symptoms
-        st.markdown(f"""
-        <div class="symptom-card">
-            <h4 style="color:#ff6b6b; margin:0 0 8px; font-size:14px;">🔍 Symptoms</h4>
-            <p style="color:#cbd5e1; margin:0; line-height:1.7; font-size:14px;">{info['symptoms']}</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Cause
-        st.markdown(f"""
-        <div class="cause-card">
-            <h4 style="color:#ffa502; margin:0 0 8px; font-size:14px;">🧬 Cause</h4>
-            <p style="color:#cbd5e1; margin:0; line-height:1.7; font-size:14px;">{info['cause']}</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Treatment
-        treatment_items = ""
-        for i, t in enumerate(info["treatment"]):
-            treatment_items += f"""
-            <div style="display:flex; gap:10px; margin-bottom:8px; align-items:flex-start;">
-                <span style="width:22px; height:22px; border-radius:6px; font-size:11px; font-weight:700;
-                             background:rgba(46,213,115,0.15); color:#2ed573;
-                             display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">{i+1}</span>
-                <span style="font-size:14px; color:#e2e8f0; line-height:1.6;">{t}</span>
-            </div>
-            """
-        st.markdown(f"""
-        <div class="treatment-card">
-            <h4 style="color:#2ed573; margin:0 0 12px; font-size:14px;">💊 Recommended Treatment</h4>
-            {treatment_items}
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Prevention
-        st.markdown(f"""
-        <div class="prevention-card">
-            <h4 style="color:#818cf8; margin:0 0 8px; font-size:14px;">🛡️ Prevention</h4>
-            <p style="color:#cbd5e1; margin:0; line-height:1.7; font-size:14px;">{info['prevention']}</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    elif is_healthy:
-        st.markdown("---")
-        st.markdown("""
-        <div style="background:rgba(46,213,115,0.08); border:1px solid rgba(46,213,115,0.25);
-                    border-radius:20px; padding:30px; text-align:center;">
-            <div style="font-size:56px; margin-bottom:12px;">🌿</div>
-            <h3 style="color:#2ed573; margin:0 0 10px;">Your Cotton Leaf is Healthy!</h3>
-            <p style="color:#94a3b8; font-size:14px; line-height:1.6; max-width:500px; margin:0 auto;">
-                No disease detected. Keep up your good crop management — regular scouting, 
-                balanced fertilization, and proper irrigation.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # ── Technical Specifications ──
-    st.markdown("---")
-    st.markdown('<p class="section-label">⚙️ Technical Specifications</p>', unsafe_allow_html=True)
-
-    spec_cols = st.columns(4)
-    specs = [
-        ("🧠", "Architecture", model_name, stats.get("color", "#818cf8")),
-        ("📐", "Parameters", stats.get("params", "—"), "#00d2d3"),
-        ("⚡", "FLOPs", stats.get("flops", "—"), "#ffa502"),
-        ("🎯", "Accuracy", stats.get("acc", "—"), "#2ed573"),
-    ]
-    for col, (icon, label, value, color) in zip(spec_cols, specs):
-        with col:
-            st.markdown(f"""
-            <div class="metric-card" style="background:{color}08; border:1px solid {color}25;">
-                <div style="font-size:22px; margin-bottom:4px;">{icon}</div>
-                <div class="metric-label">{label}</div>
-                <div class="metric-value" style="color:{color};">{value}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-# ── Footer ──
-st.markdown("---")
-st.markdown("""
-<div style="text-align:center; padding:12px 0; color:#1e293b; font-size:12px;">
-    Cotton Guard v1.0 — Built with ❤️ for Pakistani Cotton Farmers 🇵🇰
-</div>
-""", unsafe_allow_html=True)
+if analyze and uploaded_file:
+    try:
+        with st.spinner("🌿 Analyzing your cotton leaf..."):
+            model, device = load_model(ds["arch_key"], ds["model_file"], len(ds["classes"]))
+            result = predict(model, image, device, ds["classes"], ds["img_size"])
+        pc, conf = result["class"], result["confidence"]
+        healthy = pc in ["Healthy","Healthy Leaf"]
+        bc = "prediction-box" if healthy else "disease-box"
+        lc = "prediction-label" if healthy else "disease-label"
+        ic = "✅" if healthy else "⚠️"
+        st.markdown(f'<div class="{bc}"><div class="{lc}">{ic} Prediction Result</div><div class="prediction-name">{pc}</div><div class="prediction-index">Class Index: {result["index"]} · Confidence: {conf*100:.1f}%</div></div>', unsafe_allow_html=True)
+        c1, c2 = st.columns([1,2])
+        with c1:
+            cc = "#2d5016" if conf>0.8 else "#8b6914" if conf>0.5 else "#a83232"
+            st.markdown(f'<div class="earth-card"><div class="earth-card-header">Confidence</div><div class="confidence-section"><div class="confidence-pct" style="color:{cc}">{conf*100:.1f}%</div></div>', unsafe_allow_html=True)
+            st.progress(conf); st.markdown('</div>', unsafe_allow_html=True)
+        with c2:
+            st.markdown('<div class="earth-card"><div class="earth-card-header">Class Probabilities</div>', unsafe_allow_html=True)
+            for cn,p in sorted(result["probabilities"].items(), key=lambda x:-x[1]):
+                bc2 = "#2d5016" if cn==pc else "#d4dccb"
+                st.markdown(f'<div class="prob-item"><div class="prob-name">{cn}</div><div class="prob-bar-bg"><div class="prob-bar-fill" style="width:{p*100:.1f}%;background:{bc2}"></div></div><div class="prob-pct">{p*100:.1f}%</div></div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="earth-card"><div class="earth-card-header">⚡ Performance</div><div class="metric-row"><div class="metric-card"><div class="metric-label">Inference</div><div class="metric-value">{result["inference_time_ms"]:.1f}ms</div></div><div class="metric-card"><div class="metric-label">Model</div><div class="metric-value">{ds["arch_key"]}</div></div><div class="metric-card"><div class="metric-label">Original</div><div class="metric-value">{image.size[0]}×{image.size[1]}</div></div><div class="metric-card"><div class="metric-label">Dataset</div><div class="metric-value">{dataset_choice.split("—")[0].strip()}</div></div></div></div>', unsafe_allow_html=True)
+        if pc in DISEASE_INFO:
+            info = DISEASE_INFO[pc]
+            if not healthy:
+                st.markdown(f'<div class="earth-card"><div class="earth-card-header">🔬 Disease Information & Treatment</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="info-card info-card-warn"><h4>{info.get("icon","")} Severity: {info["severity"]}</h4><p>{info["description"]}</p></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="info-card"><h4>🔍 Symptoms</h4><p>{info["symptoms"]}</p></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="info-card"><h4>💊 Treatment</h4><p>{info["treatment"]}</p></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="info-card"><h4>🛡️ Prevention</h4><p>{info["prevention"]}</p></div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="info-card"><h4>✅ Your cotton leaf looks healthy!</h4><p>{info["description"]}</p></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="info-card"><h4>🌱 Maintenance Tips</h4><p>{info["prevention"]}</p></div>', unsafe_allow_html=True)
+    except FileNotFoundError: st.error(f"⚠️ Model not found: `{ds['model_file']}`")
+    except Exception as e: st.error(f"Error: {str(e)}")
+elif analyze and not uploaded_file:
+    st.warning("☝️ Please upload a cotton leaf image first.")
