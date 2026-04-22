@@ -1,13 +1,12 @@
 [theme]
-primaryColor = "#4ade80"
-backgroundColor = "#0a0f1a"
-secondaryBackgroundColor = "#0d1525"
-textColor = "#e2e8f0"
+primaryColor = "#2d5016"
+backgroundColor = "#e8efe2"
+secondaryBackgroundColor = "#d9e4cf"
+textColor = "#1a2e0a"
 font = "sans serif"
 
 [server]
 maxUploadSize = 50
-enableXsrfProtection = true
 
 [browser]
 gatherUsageStats = false
