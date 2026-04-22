@@ -54,6 +54,7 @@ div[data-testid="stSelectbox"] > div > div { background:#d9e4cf !important; bord
 .stButton > button[kind="primary"] { background:linear-gradient(135deg,#2d5016,#3d6b20) !important; color:white !important; border:none !important; border-radius:10px !important; font-weight:700 !important; font-size:1rem !important; }
 .stButton > button[kind="primary"]:hover { background:linear-gradient(135deg,#3d6b20,#4a8028) !important; }
 .stProgress > div > div { background-color:#2d5016 !important; }
+div[data-testid="stImage"] > div > div > p { color:#2d3a1e !important; font-weight:700 !important; font-size:0.9rem !important; }
 #MainMenu {visibility:hidden;} footer {visibility:hidden;} .stDeployButton {display:none;}
 </style>
 """, unsafe_allow_html=True)
