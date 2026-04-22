@@ -54,7 +54,6 @@ div[data-testid="stSelectbox"] > div > div { background:#d9e4cf !important; bord
 .stButton > button[kind="primary"] { background:linear-gradient(135deg,#2d5016,#3d6b20) !important; color:white !important; border:none !important; border-radius:10px !important; font-weight:700 !important; font-size:1rem !important; }
 .stButton > button[kind="primary"]:hover { background:linear-gradient(135deg,#3d6b20,#4a8028) !important; }
 .stProgress > div > div { background-color:#2d5016 !important; }
-div[data-testid="stImage"] > div > div > p { color:#2d3a1e !important; font-weight:700 !important; font-size:0.9rem !important; }
 #MainMenu {visibility:hidden;} footer {visibility:hidden;} .stDeployButton {display:none;}
 </style>
 """, unsafe_allow_html=True)
@@ -502,29 +501,33 @@ if analyze and uploaded_file and 'result' in dir():
             with st.spinner("Saliency..."):
                 sal = compute_saliency(model_xai, image, device_xai, ds["img_size"])
                 sal_overlay = overlay_heatmap(raw_img, sal, colormap='hot')
-            st.image(sal_overlay, caption="Saliency Map", use_container_width=True, clamp=True)
-            st.markdown('<p style="color:#7a8b6e;font-size:0.68rem;text-align:center;">Pixel-level gradient importance</p>', unsafe_allow_html=True)
+            st.image(sal_overlay, use_container_width=True, clamp=True)
+            st.markdown('<p style="color:#2d5016;font-size:0.95rem;font-weight:700;text-align:center;margin-top:0.3rem;">Saliency Map</p>', unsafe_allow_html=True)
+            st.markdown('<p style="color:#5a6650;font-size:0.72rem;text-align:center;">Pixel-level gradient importance</p>', unsafe_allow_html=True)
 
         with xai_col2:
             with st.spinner("GradCAM..."):
                 gcam = compute_gradcam(model_xai, image, device_xai, ds["img_size"], target_layer)
                 gcam_overlay = overlay_heatmap(raw_img, gcam)
-            st.image(gcam_overlay, caption="GradCAM", use_container_width=True, clamp=True)
-            st.markdown('<p style="color:#7a8b6e;font-size:0.68rem;text-align:center;">Region-level activation focus</p>', unsafe_allow_html=True)
+            st.image(gcam_overlay, use_container_width=True, clamp=True)
+            st.markdown('<p style="color:#2d5016;font-size:0.95rem;font-weight:700;text-align:center;margin-top:0.3rem;">GradCAM</p>', unsafe_allow_html=True)
+            st.markdown('<p style="color:#5a6650;font-size:0.72rem;text-align:center;">Region-level activation focus</p>', unsafe_allow_html=True)
 
         with xai_col3:
             with st.spinner("GradCAM++..."):
                 gcpp = compute_gradcam_pp(model_xai, image, device_xai, ds["img_size"], target_layer)
                 gcpp_overlay = overlay_heatmap(raw_img, gcpp, colormap='inferno')
-            st.image(gcpp_overlay, caption="GradCAM++", use_container_width=True, clamp=True)
-            st.markdown('<p style="color:#7a8b6e;font-size:0.68rem;text-align:center;">Enhanced multi-instance focus</p>', unsafe_allow_html=True)
+            st.image(gcpp_overlay, use_container_width=True, clamp=True)
+            st.markdown('<p style="color:#2d5016;font-size:0.95rem;font-weight:700;text-align:center;margin-top:0.3rem;">GradCAM++</p>', unsafe_allow_html=True)
+            st.markdown('<p style="color:#5a6650;font-size:0.72rem;text-align:center;">Enhanced multi-instance focus</p>', unsafe_allow_html=True)
 
         with xai_col4:
             with st.spinner("LIME (may take a moment)..."):
                 lime_map = compute_lime(model_xai, image, device_xai, ds["classes"], ds["img_size"])
                 lime_overlay = overlay_heatmap(raw_img, lime_map, colormap='RdYlGn')
-            st.image(lime_overlay, caption="LIME", use_container_width=True, clamp=True)
-            st.markdown('<p style="color:#7a8b6e;font-size:0.68rem;text-align:center;">Superpixel perturbation analysis</p>', unsafe_allow_html=True)
+            st.image(lime_overlay, use_container_width=True, clamp=True)
+            st.markdown('<p style="color:#2d5016;font-size:0.95rem;font-weight:700;text-align:center;margin-top:0.3rem;">LIME</p>', unsafe_allow_html=True)
+            st.markdown('<p style="color:#5a6650;font-size:0.72rem;text-align:center;">Superpixel perturbation analysis</p>', unsafe_allow_html=True)
 
         model_xai.eval()
         st.markdown('</div>', unsafe_allow_html=True)
