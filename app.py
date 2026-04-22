@@ -49,8 +49,7 @@ div[data-testid="stFileUploader"] { background:#d9e4cf; border:2px dashed #a8b89
 div[data-testid="stFileUploader"]:hover { border-color:#8b6914; }
 section[data-testid="stSidebar"] { background:#2d3a1e !important; }
 section[data-testid="stSidebar"] .stMarkdown p, section[data-testid="stSidebar"] .stMarkdown li { color:#d4dccb !important; }
-div[data-testid="stSelectbox"] > div > div { background:#d9e4cf !important; border-color:#b8c9a8 !important; color:#2d3a1e !important; }
-div[data-testid="stSelectbox"] svg { fill:#2d5016 !important; }
+div[data-testid="stSelectbox"] > div > div { background:#d9e4cf !important; border-color:#b8c9a8 !important; }
 .stSelectbox label { color:#5a6650 !important; font-family:'Fira Code',monospace !important; font-size:0.68rem !important; text-transform:uppercase; letter-spacing:2px; }
 .stButton > button[kind="primary"] { background:linear-gradient(135deg,#2d5016,#3d6b20) !important; color:white !important; border:none !important; border-radius:10px !important; font-weight:700 !important; font-size:1rem !important; }
 .stButton > button[kind="primary"]:hover { background:linear-gradient(135deg,#3d6b20,#4a8028) !important; }
@@ -319,3 +318,214 @@ if analyze and uploaded_file:
     except Exception as e: st.error(f"Error: {str(e)}")
 elif analyze and not uploaded_file:
     st.warning("Please upload a cotton leaf image first.")
+
+# ╔═══════════════════════ XAI SECTION ═════════════════════════════════════╗
+
+def get_xai_transform(img_size=224):
+    return transforms.Compose([transforms.Resize((img_size, img_size)), transforms.ToTensor(),
+        transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])])
+
+def get_raw_image(image, img_size=224):
+    """Get normalized numpy image for overlay."""
+    tf = transforms.Compose([transforms.Resize((img_size, img_size)), transforms.ToTensor()])
+    return tf(image).permute(1, 2, 0).numpy()
+
+def compute_saliency(model, image, device, img_size=224):
+    """Compute vanilla gradient saliency map."""
+    tf = get_xai_transform(img_size)
+    inp = tf(image).unsqueeze(0).to(device)
+    inp.requires_grad_(True)
+    model.zero_grad()
+    logits = model(inp)
+    pred_class = logits.argmax(1).item()
+    logits[0, pred_class].backward()
+    saliency = inp.grad.data.abs().squeeze().cpu()
+    saliency = saliency.max(dim=0)[0]  # max across channels
+    saliency = (saliency - saliency.min()) / (saliency.max() - saliency.min() + 1e-8)
+    return saliency.numpy()
+
+def compute_gradcam(model, image, device, img_size=224, target_layer=None):
+    """Compute GradCAM heatmap."""
+    activations = {}
+    gradients = {}
+    def fwd_hook(m, i, o): activations['val'] = o
+    def bwd_hook(m, i, o): gradients['val'] = o[0]
+
+    handle_f = target_layer.register_forward_hook(fwd_hook)
+    handle_b = target_layer.register_full_backward_hook(bwd_hook)
+
+    tf = get_xai_transform(img_size)
+    inp = tf(image).unsqueeze(0).to(device)
+    inp.requires_grad_(True)
+    model.zero_grad()
+    logits = model(inp)
+    pred_class = logits.argmax(1).item()
+    logits[0, pred_class].backward()
+
+    act = activations['val'].detach()
+    grad = gradients['val'].detach()
+    weights = grad.mean(dim=[2, 3], keepdim=True)
+    cam = (weights * act).sum(dim=1, keepdim=True)
+    cam = F.relu(cam)
+    cam = F.interpolate(cam, size=(img_size, img_size), mode='bilinear', align_corners=False)
+    cam = cam.squeeze().cpu().numpy()
+    cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
+
+    handle_f.remove()
+    handle_b.remove()
+    return cam
+
+def compute_gradcam_pp(model, image, device, img_size=224, target_layer=None):
+    """Compute GradCAM++ heatmap."""
+    activations = {}
+    gradients = {}
+    def fwd_hook(m, i, o): activations['val'] = o
+    def bwd_hook(m, i, o): gradients['val'] = o[0]
+
+    handle_f = target_layer.register_forward_hook(fwd_hook)
+    handle_b = target_layer.register_full_backward_hook(bwd_hook)
+
+    tf = get_xai_transform(img_size)
+    inp = tf(image).unsqueeze(0).to(device)
+    inp.requires_grad_(True)
+    model.zero_grad()
+    logits = model(inp)
+    pred_class = logits.argmax(1).item()
+    logits[0, pred_class].backward()
+
+    act = activations['val'].detach()
+    grad = gradients['val'].detach()
+
+    # GradCAM++ weighting
+    grad_pow2 = grad ** 2
+    grad_pow3 = grad ** 3
+    sum_act = act.sum(dim=[2, 3], keepdim=True)
+    alpha = grad_pow2 / (2 * grad_pow2 + sum_act * grad_pow3 + 1e-8)
+    alpha = alpha * F.relu(grad)
+    weights = alpha.sum(dim=[2, 3], keepdim=True)
+
+    cam = (weights * act).sum(dim=1, keepdim=True)
+    cam = F.relu(cam)
+    cam = F.interpolate(cam, size=(img_size, img_size), mode='bilinear', align_corners=False)
+    cam = cam.squeeze().cpu().numpy()
+    cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
+
+    handle_f.remove()
+    handle_b.remove()
+    return cam
+
+def compute_lime(model, image, device, class_names, img_size=224, num_samples=100):
+    """Compute LIME explanation."""
+    from skimage.segmentation import quickshift
+    
+    tf = get_xai_transform(img_size)
+    raw_tf = transforms.Compose([transforms.Resize((img_size, img_size)), transforms.ToTensor()])
+    img_np = raw_tf(image).permute(1, 2, 0).numpy()
+    
+    # Segment image into superpixels
+    segments = quickshift(img_np, kernel_size=4, max_dist=200, ratio=0.2)
+    n_segments = len(np.unique(segments))
+    
+    # Get original prediction
+    inp = tf(image).unsqueeze(0).to(device)
+    with torch.no_grad():
+        orig_probs = F.softmax(model(inp), dim=1).cpu().numpy()[0]
+    pred_class = orig_probs.argmax()
+    
+    # Generate perturbed samples
+    np.random.seed(42)
+    perturbations = np.random.binomial(1, 0.5, size=(num_samples, n_segments))
+    perturbations[0] = np.ones(n_segments)  # include original
+    
+    predictions = []
+    for pert in perturbations:
+        masked = img_np.copy()
+        for seg_id in np.unique(segments):
+            if pert[seg_id] == 0:
+                masked[segments == seg_id] = 0.5  # gray out
+        masked_tensor = transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])(
+            torch.tensor(masked).permute(2, 0, 1).float()
+        ).unsqueeze(0).to(device)
+        with torch.no_grad():
+            p = F.softmax(model(masked_tensor), dim=1).cpu().numpy()[0]
+        predictions.append(p[pred_class])
+    
+    predictions = np.array(predictions)
+    
+    # Compute importance of each segment using correlation
+    importance = np.zeros(n_segments)
+    for seg_id in range(n_segments):
+        mask_col = perturbations[:, seg_id]
+        if mask_col.std() > 0:
+            importance[seg_id] = np.corrcoef(mask_col, predictions)[0, 1]
+    
+    # Create heatmap
+    lime_map = np.zeros((img_size, img_size))
+    for seg_id in np.unique(segments):
+        lime_map[segments == seg_id] = importance[seg_id]
+    
+    # Normalize to 0-1
+    lime_map = (lime_map - lime_map.min()) / (lime_map.max() - lime_map.min() + 1e-8)
+    return lime_map
+
+def overlay_heatmap(raw_img, heatmap, colormap='jet', alpha=0.5):
+    """Overlay heatmap on raw image."""
+    import matplotlib.cm as cm
+    cmap = cm.get_cmap(colormap)
+    heatmap_colored = cmap(heatmap)[:, :, :3]
+    overlay = (1 - alpha) * raw_img + alpha * heatmap_colored
+    return np.clip(overlay, 0, 1)
+
+def get_target_layer(model, arch_key):
+    """Get the appropriate target layer for GradCAM."""
+    if arch_key == "LDASN":
+        return model.extractor.proj[0]  # last conv before BN in proj
+    else:  # ConvNeXt
+        return model.features[-1][-1].block[-1]  # last layer
+
+# ─── Show XAI Results ─────────────────────────────────────────────────────
+if analyze and uploaded_file and 'result' in dir():
+    try:
+        st.markdown('<div class="earth-card"><div class="earth-card-header">🧠 Explainable AI — Visual Explanations</div>', unsafe_allow_html=True)
+        st.markdown('<p style="color:#5a6650;font-size:0.82rem;margin-bottom:1rem;">These maps show which regions of the leaf the model focuses on to make its prediction.</p>', unsafe_allow_html=True)
+
+        model_xai, device_xai = load_model(ds["arch_key"], ds["model_file"], len(ds["classes"]))
+        model_xai.train()  # enable gradients for hooks
+        
+        raw_img = get_raw_image(image, ds["img_size"])
+        target_layer = get_target_layer(model_xai, ds["arch_key"])
+
+        xai_col1, xai_col2, xai_col3, xai_col4 = st.columns(4)
+
+        with xai_col1:
+            with st.spinner("Saliency..."):
+                sal = compute_saliency(model_xai, image, device_xai, ds["img_size"])
+                sal_overlay = overlay_heatmap(raw_img, sal, colormap='hot')
+            st.image(sal_overlay, caption="Saliency Map", use_container_width=True, clamp=True)
+            st.markdown('<p style="color:#7a8b6e;font-size:0.68rem;text-align:center;">Pixel-level gradient importance</p>', unsafe_allow_html=True)
+
+        with xai_col2:
+            with st.spinner("GradCAM..."):
+                gcam = compute_gradcam(model_xai, image, device_xai, ds["img_size"], target_layer)
+                gcam_overlay = overlay_heatmap(raw_img, gcam)
+            st.image(gcam_overlay, caption="GradCAM", use_container_width=True, clamp=True)
+            st.markdown('<p style="color:#7a8b6e;font-size:0.68rem;text-align:center;">Region-level activation focus</p>', unsafe_allow_html=True)
+
+        with xai_col3:
+            with st.spinner("GradCAM++..."):
+                gcpp = compute_gradcam_pp(model_xai, image, device_xai, ds["img_size"], target_layer)
+                gcpp_overlay = overlay_heatmap(raw_img, gcpp, colormap='inferno')
+            st.image(gcpp_overlay, caption="GradCAM++", use_container_width=True, clamp=True)
+            st.markdown('<p style="color:#7a8b6e;font-size:0.68rem;text-align:center;">Enhanced multi-instance focus</p>', unsafe_allow_html=True)
+
+        with xai_col4:
+            with st.spinner("LIME (may take a moment)..."):
+                lime_map = compute_lime(model_xai, image, device_xai, ds["classes"], ds["img_size"])
+                lime_overlay = overlay_heatmap(raw_img, lime_map, colormap='RdYlGn')
+            st.image(lime_overlay, caption="LIME", use_container_width=True, clamp=True)
+            st.markdown('<p style="color:#7a8b6e;font-size:0.68rem;text-align:center;">Superpixel perturbation analysis</p>', unsafe_allow_html=True)
+
+        model_xai.eval()
+        st.markdown('</div>', unsafe_allow_html=True)
+    except Exception as e:
+        st.warning(f"XAI visualization unavailable: {str(e)}")
