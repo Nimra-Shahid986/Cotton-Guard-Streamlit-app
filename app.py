@@ -517,61 +517,50 @@ if analyze and uploaded_file and 'result' in dir():
             elif high > 5: return "lightly distributed"
             else: return "diffusely spread"
 
-        # --- Saliency Map ---
+        # Generate all XAI maps
         with st.spinner("Generating Saliency Map..."):
             sal = compute_saliency(model_xai, image, device_xai, ds["img_size"])
             sal_overlay = overlay_heatmap(raw_img, sal, colormap='hot')
-        sal_region = get_focus_region(sal); sal_intensity = get_focus_intensity(sal); sal_coverage = (sal > 0.5).mean() * 100
-        sc1, sc2 = st.columns([1, 1])
-        with sc1:
-            st.image(sal_overlay, use_container_width=True, clamp=True)
-        with sc2:
-            st.markdown(f"""<div class="info-card">
-            <h4>🔥 Saliency Map</h4>
-            <p>The saliency map computes raw input gradients to identify which individual pixels most influence the prediction of <b>{pc}</b>. The activation is <b>{sal_intensity}</b> in the <b>{sal_region}</b> region of the leaf, covering approximately <b>{sal_coverage:.1f}%</b> of the image area. Bright spots (red/yellow) indicate pixels where small changes would most significantly affect the model's confidence in its prediction.</p>
-            </div>""", unsafe_allow_html=True)
-
-        # --- GradCAM ---
         with st.spinner("Generating GradCAM..."):
             gcam = compute_gradcam(model_xai, image, device_xai, ds["img_size"], target_layer)
             gcam_overlay = overlay_heatmap(raw_img, gcam)
-        gcam_region = get_focus_region(gcam); gcam_intensity = get_focus_intensity(gcam); gcam_coverage = (gcam > 0.5).mean() * 100
-        gc1, gc2 = st.columns([1, 1])
-        with gc1:
-            st.image(gcam_overlay, use_container_width=True, clamp=True)
-        with gc2:
-            st.markdown(f"""<div class="info-card">
-            <h4>🎯 GradCAM</h4>
-            <p>GradCAM (Gradient-weighted Class Activation Mapping) visualizes the last convolutional layer's activations weighted by their gradients to show which <b>regions</b> of the leaf are most important for detecting <b>{pc}</b>. The model's attention is <b>{gcam_intensity}</b> on the <b>{gcam_region}</b> area, covering <b>{gcam_coverage:.1f}%</b> of the image. Warm colors (red/orange) indicate high disease-relevant feature activation in those regions.</p>
-            </div>""", unsafe_allow_html=True)
-
-        # --- GradCAM++ ---
         with st.spinner("Generating GradCAM++..."):
             gcpp = compute_gradcam_pp(model_xai, image, device_xai, ds["img_size"], target_layer)
             gcpp_overlay = overlay_heatmap(raw_img, gcpp, colormap='inferno')
-        gcpp_region = get_focus_region(gcpp); gcpp_intensity = get_focus_intensity(gcpp); gcpp_coverage = (gcpp > 0.5).mean() * 100
-        gp1, gp2 = st.columns([1, 1])
-        with gp1:
-            st.image(gcpp_overlay, use_container_width=True, clamp=True)
-        with gp2:
-            st.markdown(f"""<div class="info-card">
-            <h4>🔬 GradCAM++</h4>
-            <p>GradCAM++ enhances standard GradCAM by applying pixel-wise gradient weighting, making it better at capturing <b>multiple disease instances</b> on the same leaf. For <b>{pc}</b>, the focus is <b>{gcpp_intensity}</b> in the <b>{gcpp_region}</b> portion, covering <b>{gcpp_coverage:.1f}%</b> of the leaf surface. This method captures finer-grained disease patterns and scattered symptoms that standard GradCAM may overlook.</p>
-            </div>""", unsafe_allow_html=True)
-
-        # --- LIME ---
-        with st.spinner("Generating LIME (may take a moment)..."):
+        with st.spinner("Generating LIME..."):
             lime_map = compute_lime(model_xai, image, device_xai, ds["classes"], ds["img_size"])
             lime_overlay = overlay_heatmap(raw_img, lime_map, colormap='RdYlGn')
+
+        # Row 1: All 4 images
+        ic1, ic2, ic3, ic4 = st.columns(4)
+        with ic1: st.image(sal_overlay, use_container_width=True, clamp=True)
+        with ic2: st.image(gcam_overlay, use_container_width=True, clamp=True)
+        with ic3: st.image(gcpp_overlay, use_container_width=True, clamp=True)
+        with ic4: st.image(lime_overlay, use_container_width=True, clamp=True)
+
+        # Row 2: All 4 titles
+        tc1, tc2, tc3, tc4 = st.columns(4)
+        with tc1: st.markdown('<p style="color:#2d5016;font-size:1rem;font-weight:700;text-align:center;">🔥 Saliency Map</p>', unsafe_allow_html=True)
+        with tc2: st.markdown('<p style="color:#2d5016;font-size:1rem;font-weight:700;text-align:center;">🎯 GradCAM</p>', unsafe_allow_html=True)
+        with tc3: st.markdown('<p style="color:#2d5016;font-size:1rem;font-weight:700;text-align:center;">🔬 GradCAM++</p>', unsafe_allow_html=True)
+        with tc4: st.markdown('<p style="color:#2d5016;font-size:1rem;font-weight:700;text-align:center;">🧩 LIME</p>', unsafe_allow_html=True)
+
+        # Compute stats
+        sal_region = get_focus_region(sal); sal_intensity = get_focus_intensity(sal); sal_coverage = (sal > 0.5).mean() * 100
+        gcam_region = get_focus_region(gcam); gcam_intensity = get_focus_intensity(gcam); gcam_coverage = (gcam > 0.5).mean() * 100
+        gcpp_region = get_focus_region(gcpp); gcpp_intensity = get_focus_intensity(gcpp); gcpp_coverage = (gcpp > 0.5).mean() * 100
         lime_region = get_focus_region(lime_map); lime_positive = (lime_map > 0.6).mean() * 100; lime_negative = (lime_map < 0.3).mean() * 100
-        lc1, lc2 = st.columns([1, 1])
-        with lc1:
-            st.image(lime_overlay, use_container_width=True, clamp=True)
-        with lc2:
-            st.markdown(f"""<div class="info-card">
-            <h4>🧩 LIME</h4>
-            <p>LIME (Local Interpretable Model-agnostic Explanations) works by segmenting the leaf into superpixels and systematically masking them to test which regions are essential for predicting <b>{pc}</b>. Green regions (<b>{lime_positive:.1f}%</b> of image) positively support the diagnosis, while red regions (<b>{lime_negative:.1f}%</b>) oppose it. The model primarily relies on the <b>{lime_region}</b> area of the leaf for its classification decision.</p>
-            </div>""", unsafe_allow_html=True)
+
+        # Row 3: All 4 descriptions
+        dc1, dc2, dc3, dc4 = st.columns(4)
+        with dc1:
+            st.markdown(f'<div class="info-card"><p>Computes raw input gradients to show which pixels most influence the prediction of <b>{pc}</b>. Activation is <b>{sal_intensity}</b> in the <b>{sal_region}</b> region, covering <b>{sal_coverage:.1f}%</b> of the image. Bright spots indicate high-impact pixels.</p></div>', unsafe_allow_html=True)
+        with dc2:
+            st.markdown(f'<div class="info-card"><p>Highlights which leaf regions contribute most to detecting <b>{pc}</b> using gradient-weighted activations. Attention is <b>{gcam_intensity}</b> on the <b>{gcam_region}</b> area, covering <b>{gcam_coverage:.1f}%</b>. Warm colors show disease-relevant features.</p></div>', unsafe_allow_html=True)
+        with dc3:
+            st.markdown(f'<div class="info-card"><p>Enhanced GradCAM with pixel-wise weighting for capturing <b>multiple disease instances</b>. For <b>{pc}</b>, focus is <b>{gcpp_intensity}</b> in the <b>{gcpp_region}</b> portion, covering <b>{gcpp_coverage:.1f}%</b>. Detects scattered symptoms better.</p></div>', unsafe_allow_html=True)
+        with dc4:
+            st.markdown(f'<div class="info-card"><p>Tests which superpixel regions are essential for predicting <b>{pc}</b>. Green areas (<b>{lime_positive:.1f}%</b>) support the diagnosis, red areas (<b>{lime_negative:.1f}%</b>) oppose it. Model relies on the <b>{lime_region}</b> area.</p></div>', unsafe_allow_html=True)
 
         model_xai.eval()
         st.markdown('</div>', unsafe_allow_html=True)
