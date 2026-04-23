@@ -495,19 +495,12 @@ if analyze and uploaded_file and 'result' in dir():
         raw_img = get_raw_image(image, ds["img_size"])
         target_layer = get_target_layer(model_xai, ds["arch_key"])
 
-        xai_col1, xai_col2 = st.columns(2)
-        xai_col3, xai_col4 = st.columns(2)
-
         def get_focus_region(heatmap):
-            """Determine which region of the image the model focuses on."""
             h, w = heatmap.shape
-            top = heatmap[:h//2, :].mean()
-            bottom = heatmap[h//2:, :].mean()
-            left = heatmap[:, :w//2].mean()
-            right = heatmap[:, w//2:].mean()
+            top = heatmap[:h//2, :].mean(); bottom = heatmap[h//2:, :].mean()
+            left = heatmap[:, :w//2].mean(); right = heatmap[:, w//2:].mean()
             center = heatmap[h//4:3*h//4, w//4:3*w//4].mean()
             edges = (top + bottom + left + right) / 4
-            
             regions = []
             if center > edges * 1.2: regions.append("center")
             if top > bottom * 1.3: regions.append("upper")
@@ -518,56 +511,67 @@ if analyze and uploaded_file and 'result' in dir():
             return ", ".join(regions)
 
         def get_focus_intensity(heatmap):
-            """Get focus intensity description."""
             high = (heatmap > 0.7).mean() * 100
             if high > 30: return "strongly concentrated"
             elif high > 15: return "moderately focused"
             elif high > 5: return "lightly distributed"
             else: return "diffusely spread"
 
-        with xai_col1:
-            with st.spinner("Saliency..."):
-                sal = compute_saliency(model_xai, image, device_xai, ds["img_size"])
-                sal_overlay = overlay_heatmap(raw_img, sal, colormap='hot')
+        # --- Saliency Map ---
+        with st.spinner("Generating Saliency Map..."):
+            sal = compute_saliency(model_xai, image, device_xai, ds["img_size"])
+            sal_overlay = overlay_heatmap(raw_img, sal, colormap='hot')
+        sal_region = get_focus_region(sal); sal_intensity = get_focus_intensity(sal); sal_coverage = (sal > 0.5).mean() * 100
+        sc1, sc2 = st.columns([1, 2])
+        with sc1:
             st.image(sal_overlay, use_container_width=True, clamp=True)
-            st.markdown('<p style="color:#2d5016;font-size:0.95rem;font-weight:700;text-align:center;margin-top:0.3rem;">Saliency Map</p>', unsafe_allow_html=True)
-            sal_region = get_focus_region(sal)
-            sal_intensity = get_focus_intensity(sal)
-            sal_coverage = (sal > 0.5).mean() * 100
-            st.markdown(f'<div class="info-card"><p>The saliency map computes raw input gradients to identify which individual pixels most influence the prediction of <b>{pc}</b>. The activation is <b>{sal_intensity}</b> in the <b>{sal_region}</b> region of the leaf, covering approximately <b>{sal_coverage:.1f}%</b> of the image area. Bright spots indicate pixels where small changes would most affect the model\'s confidence.</p></div>', unsafe_allow_html=True)
+        with sc2:
+            st.markdown(f"""<div class="info-card">
+            <h4>🔥 Saliency Map</h4>
+            <p>The saliency map computes raw input gradients to identify which individual pixels most influence the prediction of <b>{pc}</b>. The activation is <b>{sal_intensity}</b> in the <b>{sal_region}</b> region of the leaf, covering approximately <b>{sal_coverage:.1f}%</b> of the image area. Bright spots (red/yellow) indicate pixels where small changes would most significantly affect the model's confidence in its prediction.</p>
+            </div>""", unsafe_allow_html=True)
 
-        with xai_col2:
-            with st.spinner("GradCAM..."):
-                gcam = compute_gradcam(model_xai, image, device_xai, ds["img_size"], target_layer)
-                gcam_overlay = overlay_heatmap(raw_img, gcam)
+        # --- GradCAM ---
+        with st.spinner("Generating GradCAM..."):
+            gcam = compute_gradcam(model_xai, image, device_xai, ds["img_size"], target_layer)
+            gcam_overlay = overlay_heatmap(raw_img, gcam)
+        gcam_region = get_focus_region(gcam); gcam_intensity = get_focus_intensity(gcam); gcam_coverage = (gcam > 0.5).mean() * 100
+        gc1, gc2 = st.columns([1, 2])
+        with gc1:
             st.image(gcam_overlay, use_container_width=True, clamp=True)
-            st.markdown('<p style="color:#2d5016;font-size:0.95rem;font-weight:700;text-align:center;margin-top:0.3rem;">GradCAM</p>', unsafe_allow_html=True)
-            gcam_region = get_focus_region(gcam)
-            gcam_intensity = get_focus_intensity(gcam)
-            gcam_coverage = (gcam > 0.5).mean() * 100
-            st.markdown(f'<div class="info-card"><p>GradCAM uses gradient-weighted class activation mapping on the last convolutional layer to highlight which regions contribute most to detecting <b>{pc}</b>. The model\'s attention is <b>{gcam_intensity}</b> on the <b>{gcam_region}</b> area, covering <b>{gcam_coverage:.1f}%</b> of the image. Warm colors (red/orange) indicate high disease-relevant feature activation.</p></div>', unsafe_allow_html=True)
+        with gc2:
+            st.markdown(f"""<div class="info-card">
+            <h4>🎯 GradCAM</h4>
+            <p>GradCAM (Gradient-weighted Class Activation Mapping) visualizes the last convolutional layer's activations weighted by their gradients to show which <b>regions</b> of the leaf are most important for detecting <b>{pc}</b>. The model's attention is <b>{gcam_intensity}</b> on the <b>{gcam_region}</b> area, covering <b>{gcam_coverage:.1f}%</b> of the image. Warm colors (red/orange) indicate high disease-relevant feature activation in those regions.</p>
+            </div>""", unsafe_allow_html=True)
 
-        with xai_col3:
-            with st.spinner("GradCAM++..."):
-                gcpp = compute_gradcam_pp(model_xai, image, device_xai, ds["img_size"], target_layer)
-                gcpp_overlay = overlay_heatmap(raw_img, gcpp, colormap='inferno')
+        # --- GradCAM++ ---
+        with st.spinner("Generating GradCAM++..."):
+            gcpp = compute_gradcam_pp(model_xai, image, device_xai, ds["img_size"], target_layer)
+            gcpp_overlay = overlay_heatmap(raw_img, gcpp, colormap='inferno')
+        gcpp_region = get_focus_region(gcpp); gcpp_intensity = get_focus_intensity(gcpp); gcpp_coverage = (gcpp > 0.5).mean() * 100
+        gp1, gp2 = st.columns([1, 2])
+        with gp1:
             st.image(gcpp_overlay, use_container_width=True, clamp=True)
-            st.markdown('<p style="color:#2d5016;font-size:0.95rem;font-weight:700;text-align:center;margin-top:0.3rem;">GradCAM++</p>', unsafe_allow_html=True)
-            gcpp_region = get_focus_region(gcpp)
-            gcpp_intensity = get_focus_intensity(gcpp)
-            gcpp_coverage = (gcpp > 0.5).mean() * 100
-            st.markdown(f'<div class="info-card"><p>GradCAM++ improves upon GradCAM by using pixel-wise gradient weighting, better handling multiple disease instances on the leaf. For <b>{pc}</b>, the focus is <b>{gcpp_intensity}</b> in the <b>{gcpp_region}</b> portion, covering <b>{gcpp_coverage:.1f}%</b> of the leaf surface. This method captures finer-grained disease patterns that standard GradCAM may miss.</p></div>', unsafe_allow_html=True)
+        with gp2:
+            st.markdown(f"""<div class="info-card">
+            <h4>🔬 GradCAM++</h4>
+            <p>GradCAM++ enhances standard GradCAM by applying pixel-wise gradient weighting, making it better at capturing <b>multiple disease instances</b> on the same leaf. For <b>{pc}</b>, the focus is <b>{gcpp_intensity}</b> in the <b>{gcpp_region}</b> portion, covering <b>{gcpp_coverage:.1f}%</b> of the leaf surface. This method captures finer-grained disease patterns and scattered symptoms that standard GradCAM may overlook.</p>
+            </div>""", unsafe_allow_html=True)
 
-        with xai_col4:
-            with st.spinner("LIME (may take a moment)..."):
-                lime_map = compute_lime(model_xai, image, device_xai, ds["classes"], ds["img_size"])
-                lime_overlay = overlay_heatmap(raw_img, lime_map, colormap='RdYlGn')
+        # --- LIME ---
+        with st.spinner("Generating LIME (may take a moment)..."):
+            lime_map = compute_lime(model_xai, image, device_xai, ds["classes"], ds["img_size"])
+            lime_overlay = overlay_heatmap(raw_img, lime_map, colormap='RdYlGn')
+        lime_region = get_focus_region(lime_map); lime_positive = (lime_map > 0.6).mean() * 100; lime_negative = (lime_map < 0.3).mean() * 100
+        lc1, lc2 = st.columns([1, 2])
+        with lc1:
             st.image(lime_overlay, use_container_width=True, clamp=True)
-            st.markdown('<p style="color:#2d5016;font-size:0.95rem;font-weight:700;text-align:center;margin-top:0.3rem;">LIME</p>', unsafe_allow_html=True)
-            lime_region = get_focus_region(lime_map)
-            lime_positive = (lime_map > 0.6).mean() * 100
-            lime_negative = (lime_map < 0.3).mean() * 100
-            st.markdown(f'<div class="info-card"><p>LIME (Local Interpretable Model-agnostic Explanations) segments the leaf into superpixels and tests which regions are essential for predicting <b>{pc}</b>. Green regions (<b>{lime_positive:.1f}%</b> of image) positively support the diagnosis, while red regions (<b>{lime_negative:.1f}%</b>) oppose it. The model primarily relies on the <b>{lime_region}</b> area for its classification decision.</p></div>', unsafe_allow_html=True)
+        with lc2:
+            st.markdown(f"""<div class="info-card">
+            <h4>🧩 LIME</h4>
+            <p>LIME (Local Interpretable Model-agnostic Explanations) works by segmenting the leaf into superpixels and systematically masking them to test which regions are essential for predicting <b>{pc}</b>. Green regions (<b>{lime_positive:.1f}%</b> of image) positively support the diagnosis, while red regions (<b>{lime_negative:.1f}%</b>) oppose it. The model primarily relies on the <b>{lime_region}</b> area of the leaf for its classification decision.</p>
+            </div>""", unsafe_allow_html=True)
 
         model_xai.eval()
         st.markdown('</div>', unsafe_allow_html=True)
