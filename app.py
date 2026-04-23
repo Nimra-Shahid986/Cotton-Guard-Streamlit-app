@@ -522,7 +522,7 @@ if analyze and uploaded_file and 'result' in dir():
             sal = compute_saliency(model_xai, image, device_xai, ds["img_size"])
             sal_overlay = overlay_heatmap(raw_img, sal, colormap='hot')
         sal_region = get_focus_region(sal); sal_intensity = get_focus_intensity(sal); sal_coverage = (sal > 0.5).mean() * 100
-        sc1, sc2 = st.columns([1, 2])
+        sc1, sc2 = st.columns([1, 1])
         with sc1:
             st.image(sal_overlay, use_container_width=True, clamp=True)
         with sc2:
@@ -536,7 +536,7 @@ if analyze and uploaded_file and 'result' in dir():
             gcam = compute_gradcam(model_xai, image, device_xai, ds["img_size"], target_layer)
             gcam_overlay = overlay_heatmap(raw_img, gcam)
         gcam_region = get_focus_region(gcam); gcam_intensity = get_focus_intensity(gcam); gcam_coverage = (gcam > 0.5).mean() * 100
-        gc1, gc2 = st.columns([1, 2])
+        gc1, gc2 = st.columns([1, 1])
         with gc1:
             st.image(gcam_overlay, use_container_width=True, clamp=True)
         with gc2:
@@ -550,7 +550,7 @@ if analyze and uploaded_file and 'result' in dir():
             gcpp = compute_gradcam_pp(model_xai, image, device_xai, ds["img_size"], target_layer)
             gcpp_overlay = overlay_heatmap(raw_img, gcpp, colormap='inferno')
         gcpp_region = get_focus_region(gcpp); gcpp_intensity = get_focus_intensity(gcpp); gcpp_coverage = (gcpp > 0.5).mean() * 100
-        gp1, gp2 = st.columns([1, 2])
+        gp1, gp2 = st.columns([1, 1])
         with gp1:
             st.image(gcpp_overlay, use_container_width=True, clamp=True)
         with gp2:
@@ -564,7 +564,7 @@ if analyze and uploaded_file and 'result' in dir():
             lime_map = compute_lime(model_xai, image, device_xai, ds["classes"], ds["img_size"])
             lime_overlay = overlay_heatmap(raw_img, lime_map, colormap='RdYlGn')
         lime_region = get_focus_region(lime_map); lime_positive = (lime_map > 0.6).mean() * 100; lime_negative = (lime_map < 0.3).mean() * 100
-        lc1, lc2 = st.columns([1, 2])
+        lc1, lc2 = st.columns([1, 1])
         with lc1:
             st.image(lime_overlay, use_container_width=True, clamp=True)
         with lc2:
