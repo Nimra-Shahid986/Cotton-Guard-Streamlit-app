@@ -221,7 +221,7 @@ APP: Cotton Guard detects cotton leaf diseases via deep learning. Users upload l
 MODELS: SAR-CLD 2024 (7 classes, LDASN, 224x224, ~98.4% acc) | Cotton Leaf Disease (4 classes, ConvNeXt-T, 224x224, ~97.7% acc).
 TRAINING: 80/20 split, Focal Loss, AdamW, Cosine LR, augmentation, early stopping.
 DISEASES: Bacterial Blight (High), Curl Virus/CLCuV (Very High), Fussarium Wilt (High), Herbicide Damage (Medium), Jassids (Medium-High), Leaf Redding (Medium), Leaf Variegation (Medium).
-RULES: Only answer about cotton diseases/farming/this app. Redirect unrelated questions politely. Be concise, farmer-friendly. ALWAYS respond in English by default. If the user writes in Roman Urdu or informal texting style (like "ye kya hai", "meri fasal kharab ho rhi", "btao kya krun"), respond in Roman Urdu in the same casual texting style. Only use formal Urdu script if explicitly asked. Never make up info."""
+RULES: Only answer about cotton diseases/farming/this app. Redirect unrelated questions politely. Be concise, farmer-friendly. ALWAYS respond in English by default. Only respond in Urdu/Roman Urdu if the user explicitly asks you to write in Urdu or writes their message in Urdu. Never make up info."""
 
 def get_ai_response(user_msg, chat_history):
     import requests
@@ -495,7 +495,35 @@ if analyze and uploaded_file and 'result' in dir():
         raw_img = get_raw_image(image, ds["img_size"])
         target_layer = get_target_layer(model_xai, ds["arch_key"])
 
-        xai_col1, xai_col2, xai_col3, xai_col4 = st.columns(4)
+        xai_col1, xai_col2 = st.columns(2)
+        xai_col3, xai_col4 = st.columns(2)
+
+        def get_focus_region(heatmap):
+            """Determine which region of the image the model focuses on."""
+            h, w = heatmap.shape
+            top = heatmap[:h//2, :].mean()
+            bottom = heatmap[h//2:, :].mean()
+            left = heatmap[:, :w//2].mean()
+            right = heatmap[:, w//2:].mean()
+            center = heatmap[h//4:3*h//4, w//4:3*w//4].mean()
+            edges = (top + bottom + left + right) / 4
+            
+            regions = []
+            if center > edges * 1.2: regions.append("center")
+            if top > bottom * 1.3: regions.append("upper")
+            if bottom > top * 1.3: regions.append("lower")
+            if left > right * 1.3: regions.append("left")
+            if right > left * 1.3: regions.append("right")
+            if not regions: regions.append("spread across the entire leaf")
+            return ", ".join(regions)
+
+        def get_focus_intensity(heatmap):
+            """Get focus intensity description."""
+            high = (heatmap > 0.7).mean() * 100
+            if high > 30: return "strongly concentrated"
+            elif high > 15: return "moderately focused"
+            elif high > 5: return "lightly distributed"
+            else: return "diffusely spread"
 
         with xai_col1:
             with st.spinner("Saliency..."):
@@ -503,7 +531,10 @@ if analyze and uploaded_file and 'result' in dir():
                 sal_overlay = overlay_heatmap(raw_img, sal, colormap='hot')
             st.image(sal_overlay, use_container_width=True, clamp=True)
             st.markdown('<p style="color:#2d5016;font-size:0.95rem;font-weight:700;text-align:center;margin-top:0.3rem;">Saliency Map</p>', unsafe_allow_html=True)
-            st.markdown('<p style="color:#5a6650;font-size:0.72rem;text-align:center;">Pixel-level gradient importance</p>', unsafe_allow_html=True)
+            sal_region = get_focus_region(sal)
+            sal_intensity = get_focus_intensity(sal)
+            sal_coverage = (sal > 0.5).mean() * 100
+            st.markdown(f'<div class="info-card"><p>The saliency map computes raw input gradients to identify which individual pixels most influence the prediction of <b>{pc}</b>. The activation is <b>{sal_intensity}</b> in the <b>{sal_region}</b> region of the leaf, covering approximately <b>{sal_coverage:.1f}%</b> of the image area. Bright spots indicate pixels where small changes would most affect the model\'s confidence.</p></div>', unsafe_allow_html=True)
 
         with xai_col2:
             with st.spinner("GradCAM..."):
@@ -511,7 +542,10 @@ if analyze and uploaded_file and 'result' in dir():
                 gcam_overlay = overlay_heatmap(raw_img, gcam)
             st.image(gcam_overlay, use_container_width=True, clamp=True)
             st.markdown('<p style="color:#2d5016;font-size:0.95rem;font-weight:700;text-align:center;margin-top:0.3rem;">GradCAM</p>', unsafe_allow_html=True)
-            st.markdown('<p style="color:#5a6650;font-size:0.72rem;text-align:center;">Region-level activation focus</p>', unsafe_allow_html=True)
+            gcam_region = get_focus_region(gcam)
+            gcam_intensity = get_focus_intensity(gcam)
+            gcam_coverage = (gcam > 0.5).mean() * 100
+            st.markdown(f'<div class="info-card"><p>GradCAM uses gradient-weighted class activation mapping on the last convolutional layer to highlight which regions contribute most to detecting <b>{pc}</b>. The model\'s attention is <b>{gcam_intensity}</b> on the <b>{gcam_region}</b> area, covering <b>{gcam_coverage:.1f}%</b> of the image. Warm colors (red/orange) indicate high disease-relevant feature activation.</p></div>', unsafe_allow_html=True)
 
         with xai_col3:
             with st.spinner("GradCAM++..."):
@@ -519,7 +553,10 @@ if analyze and uploaded_file and 'result' in dir():
                 gcpp_overlay = overlay_heatmap(raw_img, gcpp, colormap='inferno')
             st.image(gcpp_overlay, use_container_width=True, clamp=True)
             st.markdown('<p style="color:#2d5016;font-size:0.95rem;font-weight:700;text-align:center;margin-top:0.3rem;">GradCAM++</p>', unsafe_allow_html=True)
-            st.markdown('<p style="color:#5a6650;font-size:0.72rem;text-align:center;">Enhanced multi-instance focus</p>', unsafe_allow_html=True)
+            gcpp_region = get_focus_region(gcpp)
+            gcpp_intensity = get_focus_intensity(gcpp)
+            gcpp_coverage = (gcpp > 0.5).mean() * 100
+            st.markdown(f'<div class="info-card"><p>GradCAM++ improves upon GradCAM by using pixel-wise gradient weighting, better handling multiple disease instances on the leaf. For <b>{pc}</b>, the focus is <b>{gcpp_intensity}</b> in the <b>{gcpp_region}</b> portion, covering <b>{gcpp_coverage:.1f}%</b> of the leaf surface. This method captures finer-grained disease patterns that standard GradCAM may miss.</p></div>', unsafe_allow_html=True)
 
         with xai_col4:
             with st.spinner("LIME (may take a moment)..."):
@@ -527,7 +564,10 @@ if analyze and uploaded_file and 'result' in dir():
                 lime_overlay = overlay_heatmap(raw_img, lime_map, colormap='RdYlGn')
             st.image(lime_overlay, use_container_width=True, clamp=True)
             st.markdown('<p style="color:#2d5016;font-size:0.95rem;font-weight:700;text-align:center;margin-top:0.3rem;">LIME</p>', unsafe_allow_html=True)
-            st.markdown('<p style="color:#5a6650;font-size:0.72rem;text-align:center;">Superpixel perturbation analysis</p>', unsafe_allow_html=True)
+            lime_region = get_focus_region(lime_map)
+            lime_positive = (lime_map > 0.6).mean() * 100
+            lime_negative = (lime_map < 0.3).mean() * 100
+            st.markdown(f'<div class="info-card"><p>LIME (Local Interpretable Model-agnostic Explanations) segments the leaf into superpixels and tests which regions are essential for predicting <b>{pc}</b>. Green regions (<b>{lime_positive:.1f}%</b> of image) positively support the diagnosis, while red regions (<b>{lime_negative:.1f}%</b>) oppose it. The model primarily relies on the <b>{lime_region}</b> area for its classification decision.</p></div>', unsafe_allow_html=True)
 
         model_xai.eval()
         st.markdown('</div>', unsafe_allow_html=True)
