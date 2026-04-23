@@ -551,16 +551,20 @@ if analyze and uploaded_file and 'result' in dir():
         gcpp_region = get_focus_region(gcpp); gcpp_intensity = get_focus_intensity(gcpp); gcpp_coverage = (gcpp > 0.5).mean() * 100
         lime_region = get_focus_region(lime_map); lime_positive = (lime_map > 0.6).mean() * 100; lime_negative = (lime_map < 0.3).mean() * 100
 
-        # Row 3: All 4 descriptions
+        # Description heading
+        st.markdown('<div class="earth-card-header" style="margin-top:0.5rem;">📝 How Each Method Analyzes the Leaf</div>', unsafe_allow_html=True)
+
+        # Row 3: All 4 descriptions (equal height)
+        desc_style = 'background:#cddabe;border:1px solid #b8c9a8;border-radius:10px;padding:1rem 1.2rem;min-height:220px;display:flex;flex-direction:column;justify-content:flex-start;'
         dc1, dc2, dc3, dc4 = st.columns(4)
         with dc1:
-            st.markdown(f'<div class="info-card"><p>Computes raw input gradients to show which pixels most influence the prediction of <b>{pc}</b>. Activation is <b>{sal_intensity}</b> in the <b>{sal_region}</b> region, covering <b>{sal_coverage:.1f}%</b> of the image. Bright spots indicate high-impact pixels.</p></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="{desc_style}"><h4 style="color:#2d5016;font-size:0.85rem;margin:0 0 0.4rem;">How it works</h4><p style="color:#3a4a30;font-size:0.78rem;line-height:1.6;margin:0;">Computes raw input gradients to show which <b>individual pixels</b> most influence the prediction of <b>{pc}</b>. Activation is <b>{sal_intensity}</b> in the <b>{sal_region}</b> region, covering <b>{sal_coverage:.1f}%</b> of the image. Bright red/yellow spots indicate pixels where small changes would most affect the model\'s confidence.</p></div>', unsafe_allow_html=True)
         with dc2:
-            st.markdown(f'<div class="info-card"><p>Highlights which leaf regions contribute most to detecting <b>{pc}</b> using gradient-weighted activations. Attention is <b>{gcam_intensity}</b> on the <b>{gcam_region}</b> area, covering <b>{gcam_coverage:.1f}%</b>. Warm colors show disease-relevant features.</p></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="{desc_style}"><h4 style="color:#2d5016;font-size:0.85rem;margin:0 0 0.4rem;">How it works</h4><p style="color:#3a4a30;font-size:0.78rem;line-height:1.6;margin:0;">Uses gradient-weighted activation maps from the last convolutional layer to highlight which <b>regions</b> contribute most to detecting <b>{pc}</b>. Attention is <b>{gcam_intensity}</b> on the <b>{gcam_region}</b> area, covering <b>{gcam_coverage:.1f}%</b>. Warm colors (red/orange) indicate high disease-relevant feature activation.</p></div>', unsafe_allow_html=True)
         with dc3:
-            st.markdown(f'<div class="info-card"><p>Enhanced GradCAM with pixel-wise weighting for capturing <b>multiple disease instances</b>. For <b>{pc}</b>, focus is <b>{gcpp_intensity}</b> in the <b>{gcpp_region}</b> portion, covering <b>{gcpp_coverage:.1f}%</b>. Detects scattered symptoms better.</p></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="{desc_style}"><h4 style="color:#2d5016;font-size:0.85rem;margin:0 0 0.4rem;">How it works</h4><p style="color:#3a4a30;font-size:0.78rem;line-height:1.6;margin:0;">Enhanced GradCAM with pixel-wise gradient weighting, better at capturing <b>multiple disease instances</b> on the same leaf. For <b>{pc}</b>, focus is <b>{gcpp_intensity}</b> in the <b>{gcpp_region}</b> portion, covering <b>{gcpp_coverage:.1f}%</b>. Captures finer-grained and scattered disease patterns.</p></div>', unsafe_allow_html=True)
         with dc4:
-            st.markdown(f'<div class="info-card"><p>Tests which superpixel regions are essential for predicting <b>{pc}</b>. Green areas (<b>{lime_positive:.1f}%</b>) support the diagnosis, red areas (<b>{lime_negative:.1f}%</b>) oppose it. Model relies on the <b>{lime_region}</b> area.</p></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="{desc_style}"><h4 style="color:#2d5016;font-size:0.85rem;margin:0 0 0.4rem;">How it works</h4><p style="color:#3a4a30;font-size:0.78rem;line-height:1.6;margin:0;">Segments the leaf into superpixels and tests which are essential for predicting <b>{pc}</b>. Green areas (<b>{lime_positive:.1f}%</b>) positively support the diagnosis, red areas (<b>{lime_negative:.1f}%</b>) oppose it. The model primarily relies on the <b>{lime_region}</b> area for its decision.</p></div>', unsafe_allow_html=True)
 
         model_xai.eval()
         st.markdown('</div>', unsafe_allow_html=True)
